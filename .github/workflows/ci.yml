@@ -19,14 +19,30 @@ jobs:
           version: "0.13.5"
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - name: Check or install audio decoder
+      - name: Prepare pinned CI audio decoder
+        shell: bash
         run: |
-          if ffmpeg -version >/dev/null 2>&1 && ffprobe -version >/dev/null 2>&1; then
-            echo "Using the runner's installed FFmpeg and ffprobe."
-          else
-            sudo apt-get update
-            sudo apt-get install -y ffmpeg libsndfile1
-          fi
+          decoder_dir="$RUNNER_TEMP/audio-tools"
+          mkdir -p "$decoder_dir"
+          base_url="https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1"
+          download_verified() {
+            curl --fail --location --retry 3 --connect-timeout 20 --max-time 120 \
+              --max-filesize 100000000 "$base_url/$1" --output "$decoder_dir/$1"
+            printf '%s  %s\n' "$2" "$decoder_dir/$1" | sha256sum --check
+          }
+          download_verified ffmpeg-linux-x64.gz bfe8a8fc511530457b528c48d77b5737527b504a3797a9bc4866aeca69c2dffa
+          download_verified ffprobe-linux-x64.gz 25d9b6ccb05e3d9de9e04e31e2506d8dd7f9f0418981965ac6df12e8d3afd067
+          download_verified linux-x64.LICENSE 8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903
+          download_verified linux-x64.README 72f4b1b06d419d22ace6e7cc75f06826f90737345aa0b1736158929f4aacc537
+          gzip -d "$decoder_dir/ffmpeg-linux-x64.gz" "$decoder_dir/ffprobe-linux-x64.gz"
+          printf '%s  %s\n' e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99 "$decoder_dir/ffmpeg-linux-x64" | sha256sum --check
+          printf '%s  %s\n' 4f231a1960d83e403d08f7971e271707bec278a9ae18e21b8b5b03186668450d "$decoder_dir/ffprobe-linux-x64" | sha256sum --check
+          mv "$decoder_dir/ffmpeg-linux-x64" "$decoder_dir/ffmpeg"
+          mv "$decoder_dir/ffprobe-linux-x64" "$decoder_dir/ffprobe"
+          chmod u+x "$decoder_dir/ffmpeg" "$decoder_dir/ffprobe"
+          "$decoder_dir/ffmpeg" -version
+          "$decoder_dir/ffprobe" -version
+          echo "$decoder_dir" >> "$GITHUB_PATH"
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
