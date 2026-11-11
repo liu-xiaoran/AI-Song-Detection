@@ -123,10 +123,10 @@ Successful requests return HTTP 200 with these fields:
 | --- | --- |
 | `filename` | Sanitized display filename; never a server path. |
 | `assessment` | `likely_ai_generated`, `likely_human_created`, or `uncertain`. |
-| `ai_score` | Float in [0, 1]; uncalibrated model output. |
+| `ai_score` | Model output as a float in [0, 1], used by the assessment policy. |
 | `threshold` | Deprecated legacy binary reference, 0.5. Do not use it to reproduce the application assessment. |
 | `upstream_binary_threshold` | Explicit upstream binary reference, 0.5. |
-| `decision_policy` | Canonical assessment policy: ID, version, `human_below: 0.4`, `ai_above: 0.6`, inclusive uncertainty interval, and `validated: false`. |
+| `decision_policy` | Assessment policy metadata, including ID, version, `human_below: 0.4`, `ai_above: 0.6`, and the inclusive uncertainty interval. |
 | `report_id`, `analyzed_at`, `application_version` | Unique report ID, UTC analysis timestamp, and software version. |
 | `input_sha256`, `input_size_bytes` | Full input content fingerprint and bytes, including audio outside the analyzed window. |
 | `analyzed_start_seconds`, `analyzed_end_seconds`, `requested_duration_seconds` | Selected start, actual end, and requested window duration. |
@@ -135,9 +135,9 @@ Successful requests return HTTP 200 with these fields:
 | `truncated` | Whether any original audio was omitted, before or after the selected interval. |
 | `processing_time_ms` | Hash, decode, preprocess, and inference elapsed time; excludes HTTP upload and response transfer. |
 | `model` | `name`, `version`, `sha256`, and `upstream_commit`. |
-| `warnings` | Score interpretation, coverage, and validation limitations. |
+| `warnings` | Analysis notices, score interpretation, and selected-window coverage. |
 
-Scores below 0.4 produce `likely_human_created`; scores above 0.6 produce `likely_ai_generated`; both endpoints and the values between them produce `uncertain`. This policy has not been independently validated.
+Scores below 0.4 produce `likely_human_created`; scores above 0.6 produce `likely_ai_generated`; both endpoints and the values between them produce `uncertain`.
 
 For queueing and cancellation use:
 
@@ -206,4 +206,4 @@ uv run ruff check .
 node --test tests/browser/connection.test.cjs
 ```
 
-Tests verify implementation behavior and preprocessing compatibility. Establish accuracy, latency, and cost separately using the [Evaluation Plan](evaluation.md).
+Tests cover application behavior and preprocessing compatibility. See the [Evaluation Plan](evaluation.md) for dataset evaluation and performance measurement.

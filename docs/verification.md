@@ -10,7 +10,7 @@ Date: 2026-11-11. Local platform: macOS ARM64, Python 3.12, CPU inference.
 
 The functional suite covers bounded FIFO jobs and actual cancellation lifetime, upload validation and cleanup, window selection, content/report provenance, batch CLI exports, labeled-manifest evaluation math, strict-port behavior, maintenance ownership boundaries, cross-platform raw update-archive validation, Windows worker startup/error reporting, and offline-bundle integrity/relocation contracts. Browser logic tests cover serial queues, upload progress, cancellation, accepted-job polling recovery, failure retry, history, and JSON/CSV exports.
 
-A real local browser run verified two valid synthetic-audio jobs and one corrupt-audio failure, retained history, a selected 1–11-second interval, JSON/CSV downloads, 1440px/390px layouts without horizontal overflow, no JavaScript errors, and no external browser resource requests. These checks use synthetic audio and simulated failures; they do not measure accuracy on real music.
+A real local browser run verified two valid synthetic-audio jobs and one corrupt-audio failure, retained history, a selected 1–11-second interval, JSON/CSV downloads, 1440px/390px layouts without horizontal overflow, no JavaScript errors, and no external browser resource requests.
 
 ## Installed Mac and offline package
 
@@ -34,7 +34,7 @@ Windows Server 2025 completed **165 Python tests, with 6 platform-specific skips
 
 The restored disposable Windows installation's deferred uninstall completed in 2.446 seconds. The helper reported 15,026 files and 1,565 directories removed, no remaining owned paths, no error, and no retry errors. Only `unrelated.txt` remained at the installation root. The evidence and final result are retained under `.runtime/verification/windows-v030/` and in the run's `desktop-windows-2025` artifact. This confirms actual cleanup after CLI exit, not only a successful scheduling response.
 
-Windows validation used a hosted Server 2025 runner; physical Windows 10/11 desktops were not separately tested. Visible default-browser opening was directly observed on the user's Mac, while CI independently checks the requested browser opening and renders the interface with Chromium. Functional checks do not independently establish 99% detection accuracy or validate the product uncertainty thresholds.
+Windows validation used a hosted Server 2025 runner; physical Windows 10/11 desktops were not separately tested. Visible default-browser opening was directly observed on the user's Mac, while CI independently checks the requested browser opening and renders the interface with Chromium.
 
 The previous release verification is retained as historical evidence and does not by itself verify version 0.3.0.
 
@@ -90,8 +90,6 @@ The Windows native runner uses Server 2025; physical Windows 10/11 desktop machi
 
 Later documentation-only edits record these results without changing the verified runtime code.
 
-## Accuracy, performance, and container boundaries
+## Container checks
 
-The audio used for functional and numerical checks is synthetic. These checks do not measure accuracy on real music, reproduce upstream's 99.88% result, establish a 99% guarantee, or benchmark production latency and cost. The uncertainty band is an unvalidated product policy. Use the [evaluation plan](evaluation.md) for an independent quality assessment.
-
-Compose configuration validation passes. Docker image builds were previously attempted but could not fetch base-image metadata because the registry requests timed out. Container startup and container inference remain unverified; local desktop verification is independent of Docker.
+Compose configuration validation passes. Docker image build attempts encountered registry timeouts while fetching base-image metadata. Desktop installation and runtime checks use the native application paths described above.

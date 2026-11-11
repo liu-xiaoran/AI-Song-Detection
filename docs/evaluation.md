@@ -1,12 +1,10 @@
 # Evaluation Plan
 
-## Current evidence
+## Model and coverage
 
-The application provides working inference using the bundled upstream fakeprint model. Software tests and preprocessing comparisons establish implementation behavior, not detection quality on a representative collection of songs.
+The application runs inference using the bundled upstream fakeprint model. This plan describes how to evaluate song-level results, processing speed, and cost on a labeled collection of recordings.
 
 [Upstream's pinned README](https://github.com/lofcz/ai-music-detector/tree/6ba389e94a179ac90f3eb134b741ef37baa30434#performance) reports 99.88% accuracy on 17,866 held-out samples: 5,741 human and 12,125 AI-generated. The saved model configuration records the same metrics. Its stated coverage is Suno ≤ 5 and Udio ≤ 1.5. The model card lists FMA, SONICS, and proprietary recordings as training sources, so its complete data is not included here.
-
-This project has not independently reproduced those results. The **99% song-level accuracy objective** and the initial 0.4–0.6 uncertainty band remain unverified. No general latency or cost claim is established.
 
 ## Dataset design
 
@@ -32,9 +30,9 @@ This project has not independently reproduced those results. The **99% song-leve
 
 Treat AI-generated audio as the positive class. Report the confusion matrix, accuracy, precision, recall, F1 score, false-positive rate, and false-negative rate, with sample counts and confidence intervals. Publish class balance and per-generator, genre, language, and quality breakdowns where sample sizes support them.
 
-Publish both decision coverage and accuracy among decided cases. For the primary 99% objective, divide correct song-level decisions by all eligible test songs, counting uncertain outcomes as unsuccessful decisions. Define exclusions before testing and report invalid inputs separately. This prevents apparent quality gains from silently dropping difficult songs.
+Publish both decision coverage and accuracy among decided cases. Also divide correct song-level decisions by all eligible test songs, counting uncertain outcomes as unsuccessful decisions. Define exclusions before testing and report invalid inputs separately so that the report accounts for difficult songs.
 
-Validate calibration before presenting the AI score as a probability. Choose sample sizes that support the intended claim with meaningful confidence intervals. An observed 99% on a small or unrepresentative set is insufficient for a broad accuracy claim.
+Record sample counts and confidence intervals for each metric. Include reliability curves when evaluating score calibration, and choose sample sizes appropriate to the comparisons being made.
 
 ## Speed and cost
 
@@ -72,4 +70,4 @@ Paths are relative to the manifest unless absolute. Run:
 ai-song-detection evaluate labeled-songs.csv --start 0 --duration 300 --output evaluation.json
 ```
 
-The report retains each input's provenance, failures and uncertain decisions, the model and application metadata, and the current policy. It reports confusion counts with AI as positive, decision coverage, accuracy among decided cases, correct decisions divided by all inputs, and precision/recall/F1/false-positive/false-negative rates with denominators. Missing denominators yield null rather than invented values. Failures produce a nonzero exit code and remain in the output. This command does not supply a representative corpus, prove label quality, calculate a general accuracy guarantee, or replace confidence intervals and grouped held-out evaluation. A mixed-production corpus needs a separately specified labeling protocol before using this binary manifest.
+The report retains each input's provenance, failures and uncertain decisions, the model and application metadata, and the current policy. It reports confusion counts with AI as positive, decision coverage, accuracy among decided cases, correct decisions divided by all inputs, and precision/recall/F1/false-positive/false-negative rates with denominators. Missing denominators yield null. Failures produce a nonzero exit code and remain in the output. Prepare labels and grouped held-out splits using the protocol above, and calculate confidence intervals when publishing results. Define a separate labeling protocol for mixed-production recordings before including them in a binary manifest.

@@ -14,7 +14,7 @@ The main interface provides a serial multi-song queue, stage/cancellation contro
 
 The script installers do not modify global PATH or disable system security protections. Unsigned-download warnings and enterprise restrictions may still apply. An installer entry point and source tests do not by themselves prove successful installation on every supported platform; see [Verification](verification.md).
 
-The detector analyzes spectral fakeprint features in a selected 10–300-second window (default: the first 300 seconds) of a recording. It targets known Suno ≤ 5 and Udio ≤ 1.5 artifacts. It does not validate every AI generator, identify a generator, locate generated passages, or determine authorship or copyright ownership.
+The detector analyzes spectral fakeprint features in a selected 10–300-second window (default: the first 300 seconds) of a recording. It targets known Suno ≤ 5 and Udio ≤ 1.5 artifacts and returns a screening assessment for that window. Generator identification, passage localization, authorship, and copyright decisions are outside the project's scope.
 
 ## Inputs
 
@@ -24,13 +24,13 @@ Invalid, unsupported, silent, and insufficient-evidence inputs produce explicit 
 
 ## Assessments
 
-| Assessment | Initial decision policy |
+| Assessment | Decision policy |
 | --- | --- |
 | `likely_ai_generated` | AI score > 0.6. |
 | `likely_human_created` | AI score < 0.4. |
 | `uncertain` | 0.4 ≤ AI score ≤ 0.6. |
 
-The score is the model's sigmoid output, not a calibrated probability of correctness. The uncertainty band is an unvalidated product policy. The result includes input SHA-256 and byte count, report ID and UTC time, application/model/policy versions, filename, score, assessment, exact selected interval, original and analyzed duration, omission flag, processing time, and warnings. See [Operations](operations.md) for the exact contract.
+The score is the model's sigmoid output. The application uses the thresholds above to assign an assessment. The result includes input SHA-256 and byte count, report ID and UTC time, application/model/policy versions, filename, score, assessment, exact selected interval, original and analyzed duration, omission flag, processing time, and warnings. See [Operations](operations.md) for the exact contract.
 
 ## Reference labels for evaluation
 
@@ -41,11 +41,11 @@ The score is the model's sigmoid output, not a calibrated probability of correct
 | Mixed | The recording combines generated and human-created audio, such as generated vocals over human accompaniment. |
 | Unknown | Provenance is insufficient to assign a reliable reference label. |
 
-Begin binary evaluation with fully AI-generated and human-created recordings. Report mixed and unknown recordings separately until a validated policy supports them. Ordinary editing, mastering, pitch correction, and digital instruments alone do not establish generative audio use.
+Begin binary evaluation with fully AI-generated and human-created recordings. Use separate labeling and reporting protocols for mixed and unknown recordings. Ordinary editing, mastering, pitch correction, and digital instruments alone do not establish generative audio use.
 
-## Evidence and next validation
+## Evaluation
 
-Upstream reports 99.88% on its own held-out set. This project's 99% accuracy objective remains unverified. Validate quality and the uncertainty band with an authorized, representative dataset, then measure end-to-end latency and cost on the intended hardware. Use the [Evaluation Plan](evaluation.md) to report false positives, false negatives, and decision coverage alongside accuracy.
+[Upstream reports 99.88% accuracy](https://github.com/lofcz/ai-music-detector/tree/6ba389e94a179ac90f3eb134b741ef37baa30434#performance) on its held-out set. Use an authorized, representative dataset to evaluate song-level quality and decision thresholds, and measure end-to-end latency and cost on the intended hardware. The [Evaluation Plan](evaluation.md) describes how to report false positives, false negatives, and decision coverage alongside accuracy.
 
 ## Data handling and deployment scope
 

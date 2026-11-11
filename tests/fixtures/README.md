@@ -15,11 +15,11 @@ power clamping to `[1e-10, 1e6]`, `10 * log10`, mean over frames, bins
 `512:4097`, nearest-mode minimum filter of size 10, hull floor -45 dB,
 residue clipping to `[0, 5]`, and division by `max(residue) + 1e-6`.
 
-Stored scores are model outputs for these synthetic inputs, not detection
-accuracy measurements. Production tests do not depend on PyTorch.
+Stored scores are model outputs for these synthetic inputs. Production tests
+do not depend on PyTorch.
 
 Sample comparisons allow absolute error `8e-8`; fakeprint comparisons allow
 `2e-4` on the normalized `[0, 1]` feature range. Different FFT and floating-point
 reduction implementations can amplify tiny sample differences in log-power
-bins with very low energy. These checks validate numerical preprocessing
-agreement, not equivalence of detection accuracy on music.
+bins with very low energy. These checks compare numerical preprocessing
+results with the upstream reference.

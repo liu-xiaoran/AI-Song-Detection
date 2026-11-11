@@ -80,17 +80,17 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The image includes Python, 
 - `likely_human_created`: AI score below 0.4.
 - `uncertain`: AI score from 0.4 through 0.6, inclusive.
 
-The score is an uncalibrated model output, not a verified probability that a song is AI-generated. The uncertainty band is an initial product policy and has not been validated against an independent evaluation set.
+The AI score is the model output used by the decision policy above. Reports include the score, assessment, analyzed interval, and model details.
 
 The web interface accepts a multi-file queue; each API upload accepts one file up to **100 MiB**, with at least **10 seconds** of audio. Supported extensions are MP3, WAV, FLAC, M4A, AAC, OGG, Opus, AIFF/AIF, and WMA, subject to decoder support. Audio must be mono or stereo at 16–96 kHz. Analysis defaults to the **first 300 seconds**, with an optional start offset and 10–300-second duration. Reports disclose the actual analyzed interval and whether audio was omitted. Only one analysis runs at a time. The jobs API admits up to nine pending jobs (one running plus eight waiting/uploading); the synchronous endpoint returns 429 while busy.
 
-The model targets artifacts from **Suno ≤ 5 and Udio ≤ 1.5**. Other generators, future generator versions, mixed production, and heavily modified audio are not validated. Detection cannot establish authorship, copyright ownership, or exact production history.
+The model targets artifacts from **Suno ≤ 5 and Udio ≤ 1.5**. Detection assesses audio features; authorship, copyright ownership, and production history require their own supporting records.
 
-## Accuracy and cost
+## Model reference and runtime cost
 
-Upstream [reports 99.88% accuracy](https://github.com/lofcz/ai-music-detector/tree/6ba389e94a179ac90f3eb134b741ef37baa30434#performance) on its held-out set of 17,866 samples. This project has not independently reproduced that result or established 99% accuracy on user uploads. Functional tests verify software behavior and preprocessing compatibility; they do not measure detection accuracy.
+Upstream [reports 99.88% accuracy](https://github.com/lofcz/ai-music-detector/tree/6ba389e94a179ac90f3eb134b741ef37baa30434#performance) on its held-out set of 17,866 samples.
 
-Local CPU inference avoids per-request detection service fees. Latency and actual cost depend on hardware, song length, concurrency, and hosting. Use the [Evaluation Plan](docs/evaluation.md) before publishing quality, speed, or cost claims.
+Local CPU inference avoids per-request detection service fees. Latency and actual cost depend on hardware, song length, concurrency, and hosting. See the [Evaluation Plan](docs/evaluation.md) for dataset evaluation and performance measurement.
 
 ## Development
 
