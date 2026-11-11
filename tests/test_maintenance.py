@@ -8,6 +8,7 @@ import subprocess
 import time
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -255,6 +256,10 @@ def test_windows_deferred_remover_waits_for_cli_and_does_not_recurse_links(insta
         commands.append(command)
         outputs.append(kwargs["stdout"].name)
         assert kwargs["stderr"] == subprocess.STDOUT
+        (Path(kwargs["cwd"]) / "result.json").write_text(
+            '{"status":"running","phase":"waiting_for_cli"}'
+        )
+        return SimpleNamespace(poll=lambda: None)
 
     monkeypatch.setattr(maintenance.subprocess, "Popen", popen)
     record = maintenance._schedule_windows_removal(root, [root / "releases"], "nonce")
@@ -337,13 +342,18 @@ def test_native_windows_removal_preserves_junction_target_and_handles_many_files
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell")
-def test_native_windows_helper_reports_top_level_failure_without_deleting(installed):
+def test_native_windows_helper_reports_top_level_failure_without_deleting(installed, monkeypatch):
     root, _, _ = installed
     marker = root / "uninstall-request.json"
     marker.write_text('{"nonce":"different"}')
     owned = root / "owned.txt"
     owned.write_text("keep after failed identity validation")
-    record = maintenance._schedule_windows_removal(root, [owned], "expected", wait_pid=2147483647)
+    directory = root.parent / "failed helper"
+    directory.mkdir()
+    monkeypatch.setattr(maintenance.tempfile, "mkdtemp", lambda **kwargs: str(directory))
+    with pytest.raises(maintenance.MaintenanceError, match="Uninstall request changed"):
+        maintenance._schedule_windows_removal(root, [owned], "expected", wait_pid=2147483647)
+    record = directory / "result.json"
     result = wait_for_removal(record)
     assert result["status"] == "failed"
     assert "Uninstall request changed" in result["error"]
@@ -353,6 +363,26 @@ def test_native_windows_helper_reports_top_level_failure_without_deleting(instal
     assert "Uninstall request changed" in (record.parent / "helper.log").read_text(
         encoding="utf-8", errors="replace"
     )
+
+
+def test_helper_startup_failure_reports_process_output(tmp_path):
+    record = tmp_path / "result.json"
+    (tmp_path / "helper.log").write_text("ParserError: invalid helper script")
+    child = SimpleNamespace(poll=lambda: 1)
+    with pytest.raises(maintenance.MaintenanceError, match="ParserError: invalid helper script"):
+        maintenance._wait_for_removal_start(child, record)
+
+
+def test_helper_startup_timeout_terminates_only_its_fresh_child(tmp_path):
+    events = []
+    child = SimpleNamespace(
+        poll=lambda: None,
+        terminate=lambda: events.append("terminate"),
+        wait=lambda **kwargs: events.append("wait"),
+    )
+    with pytest.raises(maintenance.MaintenanceError, match="startup handshake"):
+        maintenance._wait_for_removal_start(child, tmp_path / "result.json", timeout=0)
+    assert events == ["terminate", "wait"]
 
 
 def test_pending_uninstall_blocks_maintenance(installed):

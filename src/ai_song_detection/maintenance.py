@@ -484,7 +484,7 @@ def _schedule_windows_removal(
     # Parse/startup errors cannot reach the script's finally block. Retain both
     # streams as well as structured progress so failures never disappear.
     with (directory / "helper.log").open("ab", buffering=0) as log:
-        subprocess.Popen(
+        child = subprocess.Popen(
             [
                 "powershell.exe",
                 "-NoProfile",
@@ -497,10 +497,54 @@ def _schedule_windows_removal(
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,
-            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+            creationflags=subprocess.CREATE_NO_WINDOW,
             cwd=str(directory),
         )
+    _wait_for_removal_start(child, result)
     return result
+
+
+def _wait_for_removal_start(child: subprocess.Popen, result: Path, timeout: float = 10) -> None:
+    """Do not report scheduling success until the helper proves it is running."""
+    deadline = time.monotonic() + timeout
+    detail = "The uninstall helper did not complete its startup handshake."
+    while True:
+        try:
+            information = json.loads(result.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            information = None
+        if isinstance(information, dict):
+            if information.get("status") == "failed":
+                detail = information.get("error") or "The uninstall helper failed during startup."
+                break
+            if information.get("status") == "completed" or (
+                information.get("status") == "running"
+                and information.get("phase") in {"waiting_for_cli", "removing"}
+            ):
+                return
+        code = child.poll()
+        if code is not None:
+            detail = f"The uninstall helper exited during startup (exit code {code})."
+            break
+        if time.monotonic() >= deadline:
+            # Only signal the child this invocation just created. A late helper
+            # must not remove files after the CLI reports startup failure.
+            child.terminate()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=5)
+            break
+        time.sleep(0.1)
+    log_path = result.parent / "helper.log"
+    try:
+        raw = log_path.read_bytes()[-8192:]
+        encoding = "utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+        log = raw.decode(encoding, errors="replace").strip()
+    except OSError:
+        log = "No helper output was written."
+    raise MaintenanceError(f"{detail}\nHelper log: {log_path}\n{log}")
 
 
 _WINDOWS_REMOVAL_HELPER = r"""
