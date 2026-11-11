@@ -54,7 +54,7 @@ uv run ai-song-detection detect song.mp3 another-song.wav --json
 
 Private instance state is protected by a per-user file lock. The service identity includes application, instance, and version fields. Start and stop operations use localhost directly, independently of HTTP proxy environment settings. Browser-originated stop requests are denied; the command uses a private instance token.
 
-The service log is `state/service.log` under the application root. A log over 5 MiB is moved to `service.log.1` at the next start. If launch fails, inspect the printed log path. A missing decoder should be repaired through the installer. A startup error does not justify terminating the program occupying the preferred port.
+The service log is `state/service.log` under the application root. Windows desktop startup requests and failures are also recorded in `state/desktop.log`. A log over 5 MiB is moved to `service.log.1` at the next start. If launch fails, inspect the printed log path. A missing decoder should be repaired through the installer. A startup error does not justify terminating the program occupying the preferred port.
 
 Development requires Python 3.11–3.13, uv, and FFmpeg/ffprobe on PATH. Run `uv sync --frozen` once to prepare the checkout. `./start.sh` on macOS/Linux launches its existing virtual environment without dependency synchronization. For a foreground service, use `uv run ai-song-detection serve --port 8001` and stop it with Ctrl+C. Foreground `serve` is independent of the managed instance and is not stopped by the managed `stop` command.
 

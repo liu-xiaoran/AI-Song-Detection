@@ -27,7 +27,7 @@ Sources:
 - Windows source and build provenance: the installed platform README and https://github.com/eugeneware/ffmpeg-static/tree/b6.1.1.
 - FFmpeg licensing: https://ffmpeg.org/legal.html.
 
-No third-party binaries are committed to this repository. The installer downloads them from the pinned upstream release to the user's machine. Anyone redistributing installed binaries must retain their notices and satisfy the applicable source-distribution obligations.
+Native runtime and decoder binaries are downloaded by the installer rather than committed to this repository. The separately attributed ONNX detection model is bundled with the application. Anyone redistributing installed binaries must retain their notices and satisfy the applicable source-distribution obligations.
 
 Unsigned downloaded scripts may trigger macOS Gatekeeper or Windows SmartScreen. The installer does not disable either protection. Signed and notarized consumer installers are a separate distribution step.
 

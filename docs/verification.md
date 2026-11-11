@@ -4,7 +4,7 @@ Application version: 0.2.0. Date: 2026-11-11. Local platform: macOS ARM64, Pytho
 
 ## Local source and package checks
 
-- The latest completed full `uv run pytest -q` execution passed 76 tests. Coverage includes the real bundled model, audio validation, duration capping, FFmpeg fallback, numerical preprocessing references, upload limits, temporary-file cleanup, API contracts, concurrent-request rejection, managed-service identity and lifecycle, installer integrity, private Windows runtime preparation/repair, and failed-upgrade behavior. This includes the Windows CRLF regression check within the 16-test installer suite. One upstream Starlette deprecation warning is reported.
+- The latest completed full `uv run pytest -q` execution passed 81 tests. Coverage includes the real bundled model, audio validation, duration capping, FFmpeg fallback, numerical preprocessing references, upload limits, temporary-file cleanup, API contracts, concurrent-request rejection, managed-service identity and lifecycle, real redirector/worker PID handoff and cleanup, installer integrity, private Windows runtime preparation/repair, and failed-upgrade behavior. This includes the Windows CRLF regression check within the 16-test installer suite. One upstream Starlette deprecation warning is reported.
 - `node --test tests/browser/connection.test.cjs`: four tests pass, covering readiness requirements, single in-flight health checks, disconnect/retry behavior, file preservation, and upload gating.
 - Ruff lint and formatting checks pass. JavaScript and macOS shell syntax checks pass.
 - Version 0.2.0 source distribution and wheel build successfully. The wheel contains the bundled model, provenance, licenses, and static interface assets. The model bytes match the pinned upstream SHA-256.
@@ -27,18 +27,26 @@ The automated macOS smoke invokes the generated `.command` files through `/bin/s
 
 Additional local browser checks cover width 320, connection loss/retry, a preserved file after reconnecting, blocked submission while busy or unavailable, simulated network failure, invalid and short audio, result changes, and uncertainty rendering. These include simulated failures as well as real synthetic-audio inference; they are not all native installer tests.
 
-The pinned Intel macOS FFmpeg/ffprobe bundle was separately executed using the host's already-installed Rosetta. Its checksum, embedded LGPL configuration, macOS 12 deployment target, bundled-library linkage, signatures, and real MP3/AAC/WAV encoding/probing passed the upstream bundle checks. In addition, the full native Intel macOS desktop job passed in [GitHub Actions run 43009706785](https://github.com/liu-xiaoran/AI-Song-Detection/actions/runs/43009706785) at commit `5d3073c`, including installation, browser upload/layout, offline relaunch/inference, lifecycle, and unit checks. The application itself requires macOS 13 or newer because of ONNX Runtime.
+The pinned Intel macOS FFmpeg/ffprobe bundle was separately executed using the host's already-installed Rosetta. Its checksum, embedded LGPL configuration, macOS 12 deployment target, bundled-library linkage, signatures, and real MP3/AAC/WAV encoding/probing passed the upstream bundle checks. Full native Intel macOS desktop installation, browser upload/layout, offline relaunch/inference, lifecycle, and unit checks also passed in GitHub Actions. The application itself requires macOS 13 or newer because of ONNX Runtime.
 
 ## Platform and CI status
 
-| Target | Evidence at this record |
-| --- | --- |
-| macOS ARM64 | Local isolated installation, launch/status/stop, real inference, automated browser checks, and interactive Finder/default-browser start/stop/restart passed as described above. |
-| macOS Intel | Complete native desktop CI job passed at `5d3073c`; the current revision's consolidated CI rerun is pending. |
-| Windows 10/11 x64 | Installer implementation and platform-independent tests present; native installation, shortcuts, private runtime, and browser run pending. |
-| Remote CI | Native Intel job passed in the linked run; final results covering the subsequent Windows fixes are pending. |
+The complete [GitHub Actions run 43013384907](https://github.com/liu-xiaoran/AI-Song-Detection/actions/runs/43013384907) passed for code commit `47255c57a73ca5f38332c96d8cff01d877aaffe6`. All six jobs completed successfully:
 
-The [CI workflow](../.github/workflows/ci.yml) defines Linux tests for Python 3.11, 3.12, and 3.13, plus native installer/browser jobs on `macos-26`, `macos-15-intel`, and `windows-2025`. Desktop jobs retain reports and screenshots as artifacts. The linked Intel success applies to its recorded commit; workflow definitions and local tests do not establish success for another platform or later commit.
+| Target | Verified behavior |
+| --- | --- |
+| macOS ARM64, macOS 26 runner | Fresh private installation, source removal, desktop commands, port fallback, repeated launch, real HTTP/CLI inference, browser upload/layout, offline relaunch, stop, and Python/Node tests. Local Finder/default-browser interaction also passed as described above. |
+| macOS Intel, macOS 15 runner | The same complete native installation, lifecycle, inference, browser, offline, and test checks. |
+| Windows x64, Windows Server 2025 runner | Native `Install.cmd`, Unicode `.lnk` shortcuts invoked through ShellExecute, private Python/audio tools, worker/redirector lifecycle, repeated launch, actual HTTP/CLI inference, browser upload/layout, offline relaunch, stop, and Python/Node tests. |
+| Linux, Python 3.11 / 3.12 / 3.13 | Lint, format, Python/Node tests, and distribution builds on all three versions. |
+
+Windows module enumeration after actual inference confirmed that `MSVCP140.dll` and `MSVCP140_1.dll` loaded from the release's private runtime directory, `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll` loaded from the private CPython directory, and ONNX Runtime loaded from the private environment. No host DLLs were replaced or unloaded. This distinguishes private runtime use from merely succeeding on a hosted runner with preinstalled system libraries.
+
+The [CI workflow](../.github/workflows/ci.yml) retains native reports, logs, shortcut metadata, and screenshots as `desktop-macos-26`, `desktop-macos-15-intel`, and `desktop-windows-2025` artifacts. The native smoke checks in all three reports passed and left their verifier-managed services stopped. Reports downloaded during this verification are retained under the ignored `.runtime/verification/` directory.
+
+The Windows native runner uses Server 2025; physical Windows 10/11 desktop machines were not separately exercised. The Windows shortcut requests the system default browser, while Playwright independently verifies the rendered interface in Chromium. Visible default-browser opening was directly observed on the user's Mac. Signed-installer warnings and organization-specific execution policies remain outside the automated checks.
+
+Later documentation-only edits record these results without changing the verified runtime code.
 
 ## Accuracy, performance, and container boundaries
 
