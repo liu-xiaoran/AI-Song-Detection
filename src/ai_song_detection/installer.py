@@ -519,7 +519,7 @@ def shortcut_text(wrapper: Path, action: str, windows: bool) -> str:
     )
 
 
-def create_windows_link(shortcut: Path, target: Path) -> None:
+def create_windows_link(shortcut: Path, target: Path, arguments: list[str]) -> None:
     """Use Unicode COM interfaces; WScript.Shell loses non-ANSI desktop paths."""
     import ctypes
     import uuid
@@ -574,8 +574,8 @@ def create_windows_link(shortcut: Path, target: Path) -> None:
             )
         )
         for index, value in (
-            (20, os.environ["COMSPEC"]),  # SetPath
-            (11, f'/d /s /c ""{target}""'),  # SetArguments
+            (20, str(target)),  # SetPath
+            (11, subprocess.list2cmdline(arguments)),  # SetArguments
             (9, str(target.parent)),  # SetWorkingDirectory
             (7, "AI Song Detection local service"),  # SetDescription
         ):
@@ -605,6 +605,28 @@ def install_entries(root: Path, desktop: Path, python: Path, tools: Path, window
     desktop.mkdir(parents=True, exist_ok=True)
     wrapper = root / "bin" / ("ai-song-detection.cmd" if windows else "ai-song-detection")
     write_atomic(wrapper, command_text(python, tools, root / "state", windows), executable=True)
+    if windows:
+        # The native shortcut starts Python directly. CMD's extra parsing of
+        # nested batch paths is unnecessary for a desktop entry.
+        desktop_script = root / "bin" / "desktop.py"
+        write_atomic(
+            desktop_script,
+            "import os, sys, traceback\nfrom pathlib import Path\n"
+            + f"os.environ['PATH'] = {str(tools)!r} + os.pathsep + os.environ.get('PATH', '')\n"
+            + f"os.environ['AI_SONG_DETECTION_STATE_DIR'] = {str(root / 'state')!r}\n"
+            + "state = Path(os.environ['AI_SONG_DETECTION_STATE_DIR'])\n"
+            + "state.mkdir(parents=True, exist_ok=True)\n"
+            + "with (state / 'desktop.log').open('a', encoding='utf-8') as log:\n"
+            + "    log.write('Desktop request: ' + repr(sys.argv[1:]) + '\\n')\n"
+            + "    log.flush()\n"
+            + "    try:\n"
+            + "        from ai_song_detection.cli import main\n"
+            + "        main()\n"
+            + "    except BaseException as exc:\n"
+            + "        if not isinstance(exc, SystemExit) or exc.code not in (None, 0):\n"
+            + "            traceback.print_exc(file=log)\n"
+            + "        raise\n",
+        )
     for action, label in (("launch", APP_NAME), ("stop", "Stop " + APP_NAME)):
         entry = (
             root
@@ -613,7 +635,7 @@ def install_entries(root: Path, desktop: Path, python: Path, tools: Path, window
         )
         write_atomic(entry, shortcut_text(wrapper, action, windows), executable=True)
         if windows:
-            create_windows_link(desktop / (label + ".lnk"), entry)
+            create_windows_link(desktop / (label + ".lnk"), python, [str(desktop_script), action])
         else:
             write_atomic(
                 desktop / (label + ".command"),

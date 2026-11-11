@@ -272,8 +272,24 @@ def temporary_environment(environment: dict):
 
 def start_desktop(entry: Path, environment: dict, log: Path) -> None:
     if WINDOWS:
+        log.write_text(
+            json.dumps(
+                {
+                    "method": "os.startfile / ShellExecute on the desktop .lnk",
+                    "entry": str(entry),
+                    "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "boundary": "ShellExecute does not provide child stdout, stderr or exit status.",
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         with temporary_environment(environment):
             os.startfile(str(entry))
+        with log.open("a", encoding="utf-8") as output:
+            output.write("ShellExecute returned without an immediate exception.\n")
     else:
         run_native(entry, ["--no-browser"], environment, log=log)
 
@@ -284,6 +300,137 @@ def stop_desktop(entry: Path, environment: dict, log: Path) -> None:
             os.startfile(str(entry))
     else:
         run_native(entry, [], environment, log=log, timeout=110)
+
+
+def windows_shortcut_details(entry: Path) -> dict:
+    """Read the saved Unicode shell link without launching or changing its target."""
+    import ctypes
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("bytes", ctypes.c_ubyte * 16)]
+
+    def guid(value):
+        return GUID.from_buffer_copy(uuid.UUID(value).bytes_le)
+
+    hresult = ctypes.c_int32
+    ole = ctypes.WinDLL("ole32")
+    ole.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    ole.CoInitializeEx.restype = hresult
+    ole.CoCreateInstance.argtypes = [
+        ctypes.POINTER(GUID),
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(GUID),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    ole.CoCreateInstance.restype = hresult
+    ole.CoUninitialize.argtypes = []
+    ole.CoUninitialize.restype = None
+
+    def checked(result):
+        if result < 0:
+            raise OSError(f"Reading shell link failed (0x{result & 0xFFFFFFFF:08X})")
+
+    def invoke(pointer, index, result_type, argument_types, *arguments):
+        table = ctypes.cast(pointer, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        method = ctypes.WINFUNCTYPE(result_type, ctypes.c_void_p, *argument_types)(table[index])
+        return method(pointer, *arguments)
+
+    initialized = ole.CoInitializeEx(None, 2)
+    if initialized != -2147417850:  # RPC_E_CHANGED_MODE: existing MTA is usable.
+        checked(initialized)
+    shell, persist = ctypes.c_void_p(), ctypes.c_void_p()
+    try:
+        shell_class = guid("00021401-0000-0000-C000-000000000046")
+        shell_interface = guid("000214F9-0000-0000-C000-000000000046")
+        checked(
+            ole.CoCreateInstance(
+                ctypes.byref(shell_class),
+                None,
+                1,
+                ctypes.byref(shell_interface),
+                ctypes.byref(shell),
+            )
+        )
+        persist_interface = guid("0000010B-0000-0000-C000-000000000046")
+        checked(
+            invoke(
+                shell,
+                0,
+                hresult,
+                [ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p)],
+                ctypes.byref(persist_interface),
+                ctypes.byref(persist),
+            )
+        )
+        checked(invoke(persist, 5, hresult, [ctypes.c_wchar_p, ctypes.c_uint32], str(entry), 0))
+        details = {}
+        for name, index in (("target", 3), ("arguments", 10), ("working_directory", 8)):
+            buffer = ctypes.create_unicode_buffer(32768)
+            types = [ctypes.c_wchar_p, ctypes.c_int]
+            arguments = [buffer, len(buffer)]
+            if index == 3:
+                types.extend([ctypes.c_void_p, ctypes.c_uint32])
+                arguments.extend([None, 4])  # SLGP_RAWPATH; no resolution side effects.
+            checked(invoke(shell, index, hresult, types, *arguments))
+            details[name] = buffer.value
+        show = ctypes.c_int()
+        checked(invoke(shell, 14, hresult, [ctypes.POINTER(ctypes.c_int)], ctypes.byref(show)))
+        details["show_command"] = show.value
+        details["method"] = "Read-only IPersistFile.Load + IShellLinkW getters"
+        return details
+    finally:
+        for pointer in (persist, shell):
+            if pointer:
+                invoke(pointer, 2, ctypes.c_uint32, [])
+        if initialized >= 0:
+            ole.CoUninitialize()
+
+
+def collect_diagnostics(work: Path, report: Path, evidence: dict) -> None:
+    """Keep only explicit non-secret files, including when installation/startup fails."""
+    root, desktop = work / "Private App 中文", work / "Desktop 中文"
+    output = report / "diagnostics"
+    output.mkdir(exist_ok=True)
+    details, files, errors = {}, [], []
+    sources = [
+        *(root / "bin").glob("*.cmd"),
+        *(root / "bin").glob("*.command"),
+        root / "bin/desktop.py",
+        *desktop.glob("*.lnk"),
+        root / "current.json",
+        root / "state/service.log",
+        root / "state/desktop.log",
+    ]
+    for source in sources:
+        if not source.is_file():
+            continue
+        try:
+            # Never traverse/copy the state directory: instance.json contains a token.
+            prefix = "desktop-" if source.parent == desktop else ""
+            destination = output / (prefix + source.name)
+            with source.open("rb") as incoming, destination.open("wb") as outgoing:
+                if source.name in {"service.log", "desktop.log"}:
+                    incoming.seek(max(0, source.stat().st_size - 2 * 1024 * 1024))
+                shutil.copyfileobj(incoming, outgoing)
+            files.append(str(destination.relative_to(report)))
+            if WINDOWS and source.suffix.lower() == ".lnk":
+                try:
+                    details[source.name] = windows_shortcut_details(source)
+                except Exception as exc:
+                    details[source.name] = {"read_error": f"{type(exc).__name__}: {exc}"}
+        except Exception as exc:
+            errors.append(f"{source.name}: {type(exc).__name__}: {exc}")
+    if details:
+        (output / "shortcuts.json").write_text(
+            json.dumps(details, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        files.append("diagnostics/shortcuts.json")
+    evidence["diagnostics"] = {
+        "files": files,
+        "errors": errors,
+        "boundary": "Explicit launcher, shortcut, current-install metadata and service-log whitelist; instance.json and environment variables are never copied. Collection does not launch any entry or change a failed result.",
+    }
 
 
 def browser_verify(url: str, song: Path, report: Path) -> dict:
@@ -563,6 +710,10 @@ def main() -> None:
         evidence["error"] = f"{type(exc).__name__}: {exc}"
         raise
     finally:
+        try:
+            collect_diagnostics(arguments.work_dir.resolve(), report, evidence)
+        except Exception as exc:
+            evidence["diagnostics_error"] = f"{type(exc).__name__}: {exc}"
         evidence["finished_at_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         (report / "evidence.json").write_text(
             json.dumps(evidence, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"

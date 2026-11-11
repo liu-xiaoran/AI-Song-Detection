@@ -4,7 +4,7 @@ Application version: 0.2.0. Date: 2026-11-11. Local platform: macOS ARM64, Pytho
 
 ## Local source and package checks
 
-- `uv run pytest -q`: 73 tests pass. Coverage includes the real bundled model, audio validation, duration capping, FFmpeg fallback, numerical preprocessing references, upload limits, temporary-file cleanup, API contracts, concurrent-request rejection, managed-service identity and lifecycle, installer integrity, repair, and failed-upgrade behavior. One upstream Starlette deprecation warning is reported.
+- The latest completed full `uv run pytest -q` execution passed 76 tests. Coverage includes the real bundled model, audio validation, duration capping, FFmpeg fallback, numerical preprocessing references, upload limits, temporary-file cleanup, API contracts, concurrent-request rejection, managed-service identity and lifecycle, installer integrity, private Windows runtime preparation/repair, and failed-upgrade behavior. This includes the Windows CRLF regression check within the 16-test installer suite. One upstream Starlette deprecation warning is reported.
 - `node --test tests/browser/connection.test.cjs`: four tests pass, covering readiness requirements, single in-flight health checks, disconnect/retry behavior, file preservation, and upload gating.
 - Ruff lint and formatting checks pass. JavaScript and macOS shell syntax checks pass.
 - Version 0.2.0 source distribution and wheel build successfully. The wheel contains the bundled model, provenance, licenses, and static interface assets. The model bytes match the pinned upstream SHA-256.
@@ -23,22 +23,22 @@ The [native smoke script](../scripts/desktop_smoke.py) copies a release payload 
 - A stopped service relaunched and performed inference with `UV_OFFLINE=1` and deliberately failing HTTP/HTTPS/ALL proxy settings. This checks the installed path without changing the host firewall or claiming a physical network-disconnection test.
 - The desktop stop entry and command stopped the verifier's service; the final report confirms no verifier-managed service remained running.
 
-The automated macOS smoke invokes the generated `.command` files through `/bin/sh` with `--no-browser`. It verifies their installed runtime and lifecycle behavior. Finder double-click handling, downloaded-file quarantine prompts, and visible default-browser opening require separate interactive verification. Unit tests establish that the browser-open request occurs only after readiness and also occurs when an existing instance is reused.
+The automated macOS smoke invokes the generated `.command` files through `/bin/sh` with `--no-browser`. A separate interactive check on the user's Mac double-clicked the installed desktop start entry in Finder: the system's default browser, Microsoft Edge, opened `http://127.0.0.1:8001` and displayed `Detector ready`. Double-clicking the desktop stop entry changed the existing page to `Connection unavailable`. Double-clicking start again opened port 8002 and restored `Detector ready`. These port values are observations from that machine, not fixed installation addresses. Downloaded-file quarantine and security prompts remain dependent on download method and system policy. Unit tests also establish that the browser-open request occurs only after readiness and when an existing instance is reused.
 
 Additional local browser checks cover width 320, connection loss/retry, a preserved file after reconnecting, blocked submission while busy or unavailable, simulated network failure, invalid and short audio, result changes, and uncertainty rendering. These include simulated failures as well as real synthetic-audio inference; they are not all native installer tests.
 
-The pinned Intel macOS FFmpeg/ffprobe bundle was separately executed using the host's already-installed Rosetta. Its checksum, embedded LGPL configuration, macOS 12 deployment target, bundled-library linkage, signatures, and real MP3/AAC/WAV encoding/probing passed the upstream bundle checks. This validates that audio component, not a complete native Intel application installation. The application itself requires macOS 13 or newer because of ONNX Runtime.
+The pinned Intel macOS FFmpeg/ffprobe bundle was separately executed using the host's already-installed Rosetta. Its checksum, embedded LGPL configuration, macOS 12 deployment target, bundled-library linkage, signatures, and real MP3/AAC/WAV encoding/probing passed the upstream bundle checks. In addition, the full native Intel macOS desktop job passed in [GitHub Actions run 43009706785](https://github.com/liu-xiaoran/AI-Song-Detection/actions/runs/43009706785) at commit `5d3073c`, including installation, browser upload/layout, offline relaunch/inference, lifecycle, and unit checks. The application itself requires macOS 13 or newer because of ONNX Runtime.
 
 ## Platform and CI status
 
 | Target | Evidence at this record |
 | --- | --- |
-| macOS ARM64 | Local isolated installation, launch/status/stop, real inference, and automated browser checks passed as described above. |
-| macOS Intel | Audio bundle executed under existing Rosetta; complete native Intel installer and application run pending. |
+| macOS ARM64 | Local isolated installation, launch/status/stop, real inference, automated browser checks, and interactive Finder/default-browser start/stop/restart passed as described above. |
+| macOS Intel | Complete native desktop CI job passed at `5d3073c`; the current revision's consolidated CI rerun is pending. |
 | Windows 10/11 x64 | Installer implementation and platform-independent tests present; native installation, shortcuts, private runtime, and browser run pending. |
-| Remote CI | Workflow configured; results for the current desktop changes pending. |
+| Remote CI | Native Intel job passed in the linked run; final results covering the subsequent Windows fixes are pending. |
 
-The [CI workflow](../.github/workflows/ci.yml) defines Linux tests for Python 3.11, 3.12, and 3.13, plus native installer/browser jobs on `macos-15`, `macos-15-intel`, and `windows-2025`. Desktop jobs retain reports and screenshots as artifacts. A workflow definition and local tests do not establish that these remote jobs have passed.
+The [CI workflow](../.github/workflows/ci.yml) defines Linux tests for Python 3.11, 3.12, and 3.13, plus native installer/browser jobs on `macos-26`, `macos-15-intel`, and `windows-2025`. Desktop jobs retain reports and screenshots as artifacts. The linked Intel success applies to its recorded commit; workflow definitions and local tests do not establish success for another platform or later commit.
 
 ## Accuracy, performance, and container boundaries
 

@@ -11,9 +11,9 @@ Download and extract this project, then run the installer for your computer:
 | Platform | First installation |
 | --- | --- |
 | macOS 13 or newer, Apple Silicon or Intel | Double-click `Install.command`. |
-| Windows, x64 | Double-click `Install.cmd`. |
+| Windows 10/11, x64 | Double-click `Install.cmd`. |
 
-The installer prepares private Python, FFmpeg/ffprobe, and application dependencies, creates desktop start and stop entries, and opens the application. Use `--no-launch` to install without opening a browser. It does not require an existing Python installation, Git, Homebrew, or administrator access, and does not change your global PATH. The first installation requires an internet connection. Downloaded components are pinned and checksum-verified; see [installer dependencies](install/README.md).
+The installer prepares private Python, FFmpeg/ffprobe, and application dependencies, creates desktop start and stop entries, and opens the application. On Windows it also prepares a private Microsoft Visual C++ runtime for ONNX Runtime. Use `--no-launch` to install without opening a browser. It does not require an existing Python installation, Git, Homebrew, or administrator access, and does not change your global PATH. The first installation requires an internet connection. uv, FFmpeg, and Windows C++ runtime downloads are pinned and checksum-verified; see [installer dependencies](install/README.md).
 
 After installation, double-click the desktop **AI Song Detection** entry. The launcher starts the local service, waits for the model and decoder to be ready, and opens your default browser. Select or drop an audio file and choose **Analyze track**. Later launches and detection work offline. The installed copy is independent of the extracted source folder.
 

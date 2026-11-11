@@ -12,7 +12,7 @@ The macOS bundles contain FFmpeg 9.0.1, are built for macOS 12 or later, and ret
 
 The Windows installer also downloads Microsoft's fixed Visual C++ CRT 14.44.35211 package directly from Microsoft. Only the unmodified release DLLs under `x64/Microsoft.VC143.CRT` are extracted; debug and other architecture files are excluded. Archive and individual DLL checksums are pinned. The DLLs, original Microsoft runtime license, and download manifest remain inside each private application environment. An ASCII `.pth` file registers that directory with `os.add_dll_directory` before ONNX Runtime is imported, including when the user's install path contains Unicode characters. This avoids depending on a system-wide Visual C++ installation. Damaged runtime files cause a new environment to be prepared; loaded DLLs are preserved.
 
-Both bootstrap scripts retain uv's original MIT and Apache 2.0 licenses beside their private uv executable. Python retains its upstream license in the managed runtime directory. The installer does not make the downloaded Microsoft or FFmpeg components part of the application's MIT license.
+Both bootstrap scripts retain uv's original MIT and Apache 2.0 licenses beside their private uv executable. Python retains its upstream license in the managed runtime directory. The installer does not make the downloaded Microsoft or FFmpeg components part of the application's Apache 2.0 license.
 
 The macOS build originally considered from eugeneware was rejected after its executable reported `--enable-nonfree`; a release's generic license text is insufficient evidence of its actual build configuration.
 
