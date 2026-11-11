@@ -3,6 +3,9 @@
 import io
 import json
 import os
+import stat
+import subprocess
+import time
 import zipfile
 from pathlib import Path
 
@@ -246,19 +249,110 @@ def test_windows_deferred_remover_waits_for_cli_and_does_not_recurse_links(insta
     commands = []
     monkeypatch.setattr(maintenance.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.setattr(maintenance.subprocess, "DETACHED_PROCESS", 8, raising=False)
-    monkeypatch.setattr(
-        maintenance.subprocess, "Popen", lambda command, **kwargs: commands.append(command)
-    )
+    outputs = []
+
+    def popen(command, **kwargs):
+        commands.append(command)
+        outputs.append(kwargs["stdout"].name)
+        assert kwargs["stderr"] == subprocess.STDOUT
+
+    monkeypatch.setattr(maintenance.subprocess, "Popen", popen)
     record = maintenance._schedule_windows_removal(root, [root / "releases"], "nonce")
     script = (record.parent / "remove.ps1").read_text(encoding="utf-8-sig")
     request = json.loads((record.parent / "request.json").read_text())
     assert request == {"root": str(root), "paths": [str(root / "releases")], "nonce": "nonce"}
-    assert f"Wait-Process -Id {os.getpid()}" in script
+    assert f"$parentPid = {os.getpid()}" in script
+    assert "WaitForExit(120000)" in script
     assert "ReparsePoint" in script
-    assert "$item.Delete(); return" in script
+    assert "if (directory) Directory.Delete(path, false);" in script
+    assert (
+        "foreach (string child in Directory.EnumerateFileSystemEntries(path)) Remove(child);"
+        in script
+    )
+    assert "File.Delete(path);" in script
+    assert "Directory.Delete(path, true)" not in script
+    assert "Get-ChildItem" not in script
+    assert "Get-Item" not in script
+    assert "Remove-Item" not in script
     assert "-Recurse" not in script
     assert "uninstall-request.json" in script
+    assert "finally {" in script
+    assert "elapsed_seconds =" in script
+    assert "attempt_errors =" in script
+    assert "$status = 'completed'" in script
+    assert "$status = 'failed'" in script
+    assert outputs == [str(record.parent / "helper.log")]
     assert commands[0][0] == "powershell.exe"
+
+
+def wait_for_removal(record, timeout=60):
+    deadline = time.monotonic() + timeout
+    latest = None
+    while time.monotonic() < deadline:
+        try:
+            latest = json.loads(record.read_text(encoding="utf-8-sig"))
+            if latest["status"] in {"completed", "failed"}:
+                return latest
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.1)
+    log = (record.parent / "helper.log").read_text(encoding="utf-8", errors="replace")
+    pytest.fail(f"Windows removal helper did not finish: {latest}; log: {log}")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows .NET and junctions")
+def test_native_windows_removal_preserves_junction_target_and_handles_many_files(
+    installed, tmp_path
+):
+    root, _, _ = installed
+    target, outside = root / "owned files 中文", tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("unrelated target")
+    for index in range(32):
+        directory = target / f"directory-{index}"
+        directory.mkdir(parents=True)
+        for number in range(32):
+            (directory / f"file-{number}.txt").write_text("application data")
+    readonly = target / "readonly.txt"
+    readonly.write_text("readonly application data")
+    readonly.chmod(stat.S_IREAD)
+    link = target / "external-junction"
+    subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(outside)],
+        check=True,
+        capture_output=True,
+    )
+    marker = root / "uninstall-request.json"
+    marker.write_text('{"nonce":"native"}')
+    record = maintenance._schedule_windows_removal(root, [target], "native", wait_pid=2147483647)
+    result = wait_for_removal(record)
+    assert result["status"] == "completed", result
+    assert result["remaining"] == []
+    assert result["error"] is None
+    assert result["deleted"]["files"] >= 1025
+    assert result["deleted"]["links"] == 1
+    assert not target.exists()
+    assert not marker.exists()
+    assert (outside / "keep.txt").read_text() == "unrelated target"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell")
+def test_native_windows_helper_reports_top_level_failure_without_deleting(installed):
+    root, _, _ = installed
+    marker = root / "uninstall-request.json"
+    marker.write_text('{"nonce":"different"}')
+    owned = root / "owned.txt"
+    owned.write_text("keep after failed identity validation")
+    record = maintenance._schedule_windows_removal(root, [owned], "expected", wait_pid=2147483647)
+    result = wait_for_removal(record)
+    assert result["status"] == "failed"
+    assert "Uninstall request changed" in result["error"]
+    assert result["remaining"] == [str(owned)]
+    assert result["elapsed_seconds"] >= 0
+    assert owned.is_file() and marker.is_file()
+    assert "Uninstall request changed" in (record.parent / "helper.log").read_text(
+        encoding="utf-8", errors="replace"
+    )
 
 
 def test_pending_uninstall_blocks_maintenance(installed):

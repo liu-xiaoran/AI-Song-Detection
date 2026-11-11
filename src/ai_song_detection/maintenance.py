@@ -464,8 +464,10 @@ def _owned_entries(root: Path, current: dict) -> list[Path]:
     return entries
 
 
-def _schedule_windows_removal(root: Path, paths: list[Path], marker: str) -> Path:
-    """Let native PowerShell remove locked Python DLLs after this CLI exits."""
+def _schedule_windows_removal(
+    root: Path, paths: list[Path], marker: str, *, wait_pid: int | None = None
+) -> Path:
+    """Delete through native .NET after this CLI exits, retaining diagnostic output."""
     directory = Path(tempfile.mkdtemp(prefix="ai-song-uninstall-"))
     script = directory / "remove.ps1"
     result = directory / "result.json"
@@ -474,53 +476,199 @@ def _schedule_windows_removal(root: Path, paths: list[Path], marker: str) -> Pat
         ensure_ascii=False,
     )
     (directory / "request.json").write_text(payload, encoding="utf-8")
+    parent_pid = os.getpid() if wait_pid is None else wait_pid
     script.write_text(
-        "$ErrorActionPreference = 'Stop'\n"
-        "$request = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'request.json') -Raw -Encoding UTF8 | ConvertFrom-Json\n"
-        f"Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue\n"
-        "$markerPath = Join-Path $request.root 'uninstall-request.json'\n"
-        "$marker = Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8 | ConvertFrom-Json\n"
-        "if ($marker.nonce -ne $request.nonce) { throw 'Uninstall request changed.' }\n"
-        "$remaining = @()\n"
-        "function Remove-OwnedPath([string]$path) {\n"
-        "  if (-not (Test-Path -LiteralPath $path)) { return }\n"
-        "  $item = Get-Item -LiteralPath $path -Force\n"
-        "  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {\n"
-        "    $item.Delete(); return\n"
-        "  }\n"
-        "  if ($item.PSIsContainer) {\n"
-        "    Get-ChildItem -LiteralPath $path -Force | ForEach-Object { Remove-OwnedPath $_.FullName }\n"
-        "    [IO.Directory]::Delete($path, $false)\n"
-        "  } else { [IO.File]::SetAttributes($path, [IO.FileAttributes]::Normal); [IO.File]::Delete($path) }\n"
-        "}\n"
-        "foreach ($item in $request.paths) {\n"
-        "  for ($attempt = 0; $attempt -lt 30; $attempt++) {\n"
-        "    try { Remove-OwnedPath $item; break }\n"
-        "    catch { if ($attempt -eq 29) { $remaining += $item } else { Start-Sleep -Milliseconds 500 } }\n"
-        "  }\n"
-        "}\n"
-        "Remove-Item -LiteralPath $markerPath -Force\n"
-        "@{ remaining = $remaining } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'result.json') -Encoding UTF8\n"
-        "try { if ((Get-ChildItem -LiteralPath $request.root -Force).Count -eq 0) { Remove-Item -LiteralPath $request.root -Force } } catch {}\n",
+        f"$parentPid = {parent_pid}\n" + _WINDOWS_REMOVAL_HELPER,
         encoding="utf-8-sig",
     )
-    subprocess.Popen(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
-        cwd=str(directory),
-    )
+    # Parse/startup errors cannot reach the script's finally block. Retain both
+    # streams as well as structured progress so failures never disappear.
+    with (directory / "helper.log").open("ab", buffering=0) as log:
+        subprocess.Popen(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+            cwd=str(directory),
+        )
     return result
+
+
+_WINDOWS_REMOVAL_HELPER = r"""
+$ErrorActionPreference = 'Stop'
+$clock = [Diagnostics.Stopwatch]::StartNew()
+$resultPath = Join-Path $PSScriptRoot 'result.json'
+$request = $null
+$remaining = @()
+$attemptErrors = New-Object 'System.Collections.Generic.List[object]'
+$status = 'starting'
+$phase = 'starting'
+$currentPath = $null
+$errorMessage = $null
+$verifiedMarker = $false
+$nativeReady = $false
+$encoding = New-Object Text.UTF8Encoding($false)
+function Write-Result {
+    $counts = @{ files = 0; directories = 0; links = 0 }
+    if ($nativeReady) {
+        $counts.files = [AISongDetectionMaintenance.OwnedRemoval]::FilesDeleted
+        $counts.directories = [AISongDetectionMaintenance.OwnedRemoval]::DirectoriesDeleted
+        $counts.links = [AISongDetectionMaintenance.OwnedRemoval]::LinksDeleted
+    }
+    $result = [ordered]@{
+        status = $status
+        phase = $phase
+        remaining = @($remaining)
+        error = $errorMessage
+        attempt_errors = @($attemptErrors.ToArray())
+        current_path = $currentPath
+        elapsed_seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 3)
+        deleted = $counts
+        parent_pid = $parentPid
+        helper_pid = $PID
+    }
+    $temporary = $resultPath + '.new'
+    [IO.File]::WriteAllText($temporary, ($result | ConvertTo-Json -Depth 6), $encoding)
+    [IO.File]::Copy($temporary, $resultPath, $true)
+    [IO.File]::Delete($temporary)
+}
+try {
+    Write-Result
+    $requestPath = Join-Path $PSScriptRoot 'request.json'
+    $request = [IO.File]::ReadAllText($requestPath, $encoding) | ConvertFrom-Json
+    $remaining = @($request.paths)
+    $markerPath = Join-Path $request.root 'uninstall-request.json'
+    $marker = [IO.File]::ReadAllText($markerPath, $encoding) | ConvertFrom-Json
+    if ($marker.nonce -ne $request.nonce) { throw 'Uninstall request changed.' }
+    $verifiedMarker = $true
+    $status = 'running'
+    $phase = 'waiting_for_cli'
+    Write-Result
+    $parent = $null
+    try { $parent = [Diagnostics.Process]::GetProcessById($parentPid) }
+    catch [ArgumentException] { $parent = $null } # The CLI may already have exited.
+    if ($null -ne $parent) {
+        try {
+            if (-not $parent.WaitForExit(120000)) { throw 'The uninstall CLI did not exit within 120 seconds.' }
+        } finally { $parent.Dispose() }
+    }
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+namespace AISongDetectionMaintenance {
+    public static class OwnedRemoval {
+        public static long FilesDeleted;
+        public static long DirectoriesDeleted;
+        public static long LinksDeleted;
+        private static string Extended(string path) {
+            if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path;
+            if (path.StartsWith(@"\\", StringComparison.Ordinal)) return @"\\?\UNC\" + path.Substring(2);
+            if (path.Length > 2 && path[1] == ':' && (path[2] == '\\' || path[2] == '/'))
+                return @"\\?\" + path.Replace('/', '\\');
+            throw new ArgumentException("Expected an absolute Windows removal path.");
+        }
+        public static void RemoveOwnedPath(string path) { Remove(Extended(path)); }
+        private static void Remove(string path) {
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(path); }
+            catch (FileNotFoundException) { return; }
+            catch (DirectoryNotFoundException) { return; }
+            bool directory = (attributes & FileAttributes.Directory) != 0;
+            if ((attributes & FileAttributes.ReparsePoint) != 0) {
+                // A junction/symlink is always a leaf: never enumerate its target.
+                if (directory) Directory.Delete(path, false);
+                else File.Delete(path);
+                LinksDeleted++;
+                return;
+            }
+            if (directory) {
+                foreach (string child in Directory.EnumerateFileSystemEntries(path)) Remove(child);
+                if ((attributes & FileAttributes.ReadOnly) != 0)
+                    File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+                Directory.Delete(path, false);
+                DirectoriesDeleted++;
+            } else {
+                if ((attributes & FileAttributes.ReadOnly) != 0)
+                    File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+                File.Delete(path);
+                FilesDeleted++;
+            }
+        }
+        public static void RemoveRootIfEmpty(string path) {
+            string extended = Extended(path);
+            if (!Directory.Exists(extended)) return;
+            using (var entries = Directory.EnumerateFileSystemEntries(extended).GetEnumerator()) {
+                if (entries.MoveNext()) return;
+            }
+            Directory.Delete(extended, false);
+        }
+    }
+}
+'@
+    $nativeReady = $true
+    $phase = 'removing'
+    Write-Result
+    foreach ($item in @($request.paths)) {
+        $currentPath = $item
+        Write-Result
+        for ($attempt = 1; $attempt -le 30; $attempt++) {
+            try {
+                [AISongDetectionMaintenance.OwnedRemoval]::RemoveOwnedPath($item)
+                $remaining = @($remaining | Where-Object { $_ -cne $item })
+                break
+            } catch {
+                $detail = [ordered]@{ path = $item; attempt = $attempt; error = $_.ToString() }
+                $attemptErrors.Add($detail)
+                [Console]::Error.WriteLine(($detail | ConvertTo-Json -Compress))
+                Write-Result
+                if ($attempt -lt 30) { Start-Sleep -Milliseconds 500 }
+            }
+        }
+        Write-Result
+    }
+    if ($remaining.Count -eq 0) {
+        $status = 'completed'
+    } else {
+        $status = 'failed'
+        $errorMessage = 'One or more application paths could not be removed.'
+    }
+} catch {
+    $status = 'failed'
+    $errorMessage = $_.ToString()
+    [Console]::Error.WriteLine(($_ | Out-String))
+} finally {
+    if ($verifiedMarker) {
+        try {
+            $currentMarker = [IO.File]::ReadAllText($markerPath, $encoding) | ConvertFrom-Json
+            if ($currentMarker.nonce -eq $request.nonce) { [IO.File]::Delete($markerPath) }
+        } catch {
+            $status = 'failed'
+            $errorMessage = 'Uninstall marker cleanup failed: ' + $_.ToString()
+            [Console]::Error.WriteLine(($_ | Out-String))
+        }
+    }
+    if ($nativeReady -and $null -ne $request) {
+        try { [AISongDetectionMaintenance.OwnedRemoval]::RemoveRootIfEmpty($request.root) }
+        catch {
+            $status = 'failed'
+            $errorMessage = 'Empty installation directory cleanup failed: ' + $_.ToString()
+            [Console]::Error.WriteLine(($_ | Out-String))
+        }
+    }
+    $currentPath = $null
+    $phase = 'finished'
+    Write-Result
+}
+"""
 
 
 def uninstall(*, apply: bool = False) -> dict:

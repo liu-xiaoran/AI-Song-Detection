@@ -785,14 +785,46 @@ def verify(source: Path, work: Path, report: Path, browser: bool, evidence: dict
         removed = json.loads(
             run_native(restored_wrapper, ["uninstall", "--apply"], isolated_offline).stdout
         )
-        deadline = time.monotonic() + 50
-        while (restored_root / "current.json").exists() and time.monotonic() < deadline:
+        helper_result = None
+        evidence["scoped_uninstall"] = removed
+        deadline = time.monotonic() + 180
+        result_file = Path(removed["result_file"]) if removed.get("scheduled_after_exit") else None
+        while time.monotonic() < deadline:
+            if result_file and result_file.exists():
+                try:
+                    helper_result = json.loads(result_file.read_text(encoding="utf-8-sig"))
+                    if (
+                        helper_result.get("status") in {"completed", "failed"}
+                        or "status" not in helper_result
+                    ):
+                        break
+                except (OSError, ValueError):
+                    pass
+            elif not result_file and not (restored_root / "current.json").exists():
+                break
             time.sleep(0.25)
+        evidence["scoped_uninstall"]["helper_result"] = helper_result
+        evidence["scoped_uninstall"]["remaining_top_level"] = (
+            sorted(path.name for path in restored_root.iterdir()) if restored_root.exists() else []
+        )
+        if helper_result is not None:
+            (report / "uninstall-result.json").write_text(
+                json.dumps(helper_result, indent=2), encoding="utf-8"
+            )
         check(
             removed["applied"]
             and not (restored_root / "current.json").exists()
-            and unrelated.exists(),
-            "Scoped uninstall did not remove only owned installation files",
+            and unrelated.exists()
+            and (
+                not result_file
+                or (
+                    helper_result is not None
+                    and helper_result.get("status", "completed") == "completed"
+                    and not helper_result.get("remaining")
+                    and not helper_result.get("error")
+                )
+            ),
+            "Scoped uninstall did not remove only owned installation files; see scoped_uninstall evidence",
         )
         checks["scoped_uninstall_preserves_unrelated"] = True
 
