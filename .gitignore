@@ -1,0 +1,55 @@
+# Operating system and editor files
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local credentials and configuration
+.env
+.env.*
+!.env.example
+credentials/
+secrets/
+*.pem
+*.key
+
+# Python environments and generated output
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Local audio, datasets, models, and experiment artifacts
+data/
+datasets/
+models/
+checkpoints/
+outputs/
+runs/
+logs/
+*.log
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.aac
+*.ogg
+*.aiff
+*.aif
+*.wma
+*.mp4
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
