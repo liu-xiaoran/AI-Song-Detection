@@ -84,10 +84,10 @@ def _copy_tree(
 def _inventory(root: Path) -> dict:
     inventory = {}
     for path in sorted(root.rglob("*")):
-        if path.is_file() and _desktop_metadata(path):
-            continue
         if path.is_symlink():
             raise BundleError("Offline bundles must not contain symbolic links.")
+        if path.is_file() and _desktop_metadata(path):
+            continue
         if path.is_file() and path != root / MANIFEST:
             inventory[path.relative_to(root).as_posix()] = {
                 "sha256": _digest(path),
