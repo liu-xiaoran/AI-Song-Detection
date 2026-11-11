@@ -80,7 +80,7 @@ def test_bundle_is_relocatable_and_omits_audio_state_reports_and_virtualenv(inst
     launcher = (destination / "Restore.command").read_text()
     assert str(root) not in launcher
     assert "shasum -a 256" in launcher
-    assert ' -I -B "$bundle_dir/restore.py"' in launcher
+    assert ' -I -B -X utf8 "$bundle_dir/restore.py"' in launcher
     moved = tmp_path / "Moved Folder 中文"
     destination.rename(moved)
     assert bundle.verify(moved)["source_sha256"] == manifest["source_sha256"]
@@ -221,7 +221,7 @@ def test_windows_launcher_is_relative_utf8_and_verifies_before_python_execution(
     relative = python.relative_to(root).as_posix()
     bundle._launchers(root, "win32-x64", relative)
     script = (root / "restore.ps1").read_text(encoding="utf-8-sig")
-    assert script.index("Get-FileHash") < script.index("& $python -I -B $restore")
+    assert script.index("Get-FileHash") < script.index("& $python -I -B -X utf8 $restore")
     assert str(root) not in script
     assert "$PSScriptRoot" in script
     batch = (root / "Restore.cmd").read_bytes()
@@ -237,3 +237,12 @@ def test_loading_verified_installer_does_not_modify_reusable_bundle(installed):
     bundle._load_installer(destination / "source")
     assert not (destination / "source/src/ai_song_detection/__pycache__").exists()
     assert bundle.verify(destination) == original
+
+
+def test_finder_and_explorer_metadata_do_not_break_reusable_installer(installed):
+    _, _, destination = installed
+    bundle.create(destination)
+    manifest = bundle.verify(destination)
+    for name in (".DS_Store", "._Restore.command", "Thumbs.db", "desktop.ini"):
+        (destination / name).write_bytes(b"desktop metadata")
+    assert bundle.verify(destination) == manifest

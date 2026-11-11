@@ -24,6 +24,10 @@ MANIFEST = "bundle-manifest.json"
 SCHEMA_VERSION = 1
 
 
+def _desktop_metadata(path: Path) -> bool:
+    return path.name in {".DS_Store", "Thumbs.db", "desktop.ini"} or path.name.startswith("._")
+
+
 class BundleError(RuntimeError):
     """A bundle cannot be safely created or restored."""
 
@@ -80,6 +84,8 @@ def _copy_tree(
 def _inventory(root: Path) -> dict:
     inventory = {}
     for path in sorted(root.rglob("*")):
+        if path.is_file() and _desktop_metadata(path):
+            continue
         if path.is_symlink():
             raise BundleError("Offline bundles must not contain symbolic links.")
         if path.is_file() and path != root / MANIFEST:
@@ -204,7 +210,7 @@ def _launchers(root: Path, target: str, python_relative: str) -> None:
             + 'restore_actual=$(shasum -a 256 restore.py | cut -d " " -f 1)\n'
             + 'if [ "$python_actual" != "$python_expected" ] || [ "$restore_actual" != "$restore_expected" ]; then\n'
             + "  printf '%s\\n' 'Bundle bootstrap checksum verification failed. Nothing was executed.' >&2\n  exit 1\nfi\n"
-            + 'exec "$bundle_dir/$python_relative" -I -B "$bundle_dir/restore.py" "$@"\n'
+            + 'exec "$bundle_dir/$python_relative" -I -B -X utf8 "$bundle_dir/restore.py" "$@"\n'
         )
         entry = root / "Restore.command"
         entry.write_text(script, encoding="utf-8")
@@ -217,7 +223,7 @@ def _launchers(root: Path, target: str, python_relative: str) -> None:
             + "    $restore = Join-Path $PSScriptRoot 'restore.py'\n"
             + f"    if ((Get-FileHash -LiteralPath $python -Algorithm SHA256).Hash.ToLowerInvariant() -ne '{python_hash}') {{ throw 'Private Python checksum verification failed.' }}\n"
             + f"    if ((Get-FileHash -LiteralPath $restore -Algorithm SHA256).Hash.ToLowerInvariant() -ne '{restore_hash}') {{ throw 'Restore script checksum verification failed.' }}\n"
-            + "    & $python -I -B $restore @args\n    exit $LASTEXITCODE\n"
+            + "    & $python -I -B -X utf8 $restore @args\n    exit $LASTEXITCODE\n"
             + "} catch { Write-Error $_; exit 1 }\n"
         )
         (root / "restore.ps1").write_text(powershell, encoding="utf-8-sig")
