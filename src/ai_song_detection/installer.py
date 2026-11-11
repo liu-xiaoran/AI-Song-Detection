@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import contextlib
 import gzip
 import hashlib
@@ -19,6 +18,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 APP_NAME = "AI Song Detection"
@@ -170,8 +170,8 @@ def prepare_ffmpeg(root: Path, manifest: dict, target: str) -> Path:
         return prepare_ffmpeg_bundle(root, specification["ffmpeg_bundle"])
     release = manifest["ffmpeg_release"]
     base = f"https://github.com/eugeneware/ffmpeg-static/releases/download/{release}"
-    tools = root / "tools" / f"ffmpeg-{release}-{target}"
-    tools.mkdir(parents=True, exist_ok=True)
+    tools_root = root / "tools"
+    tools = tools_root / f"ffmpeg-{release}-{target}"
     suffix = ".exe" if target.startswith("win32") else ""
     assets = {
         "ffmpeg": f"ffmpeg-{target}",
@@ -179,6 +179,26 @@ def prepare_ffmpeg(root: Path, manifest: dict, target: str) -> Path:
         "license": f"{target}.LICENSE",
         "readme": f"{target}.README",
     }
+    output_names = {
+        kind: ((kind + suffix) if kind in {"ffmpeg", "ffprobe"} else kind.upper())
+        for kind in assets
+    }
+    expected_files = {
+        output_names[kind]: specification[f"{kind}_binary_sha256"] for kind in assets
+    }
+    candidates = [tools]
+    try:
+        preferred = Path(json.loads((root / "current.json").read_text())["ffmpeg_directory"])
+        if preferred.parent == tools_root:
+            candidates.insert(0, preferred)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    matched = next((path for path in candidates if files_match(path, expected_files)), None)
+    if matched:
+        tools = matched
+    elif tools.exists():
+        tools = tools_root / (tools.name + "-repair-" + str(time.time_ns()))
+    tools.mkdir(parents=True, exist_ok=True)
     downloads = {}
     for kind, name in assets.items():
         print(f"Preparing {name}...", flush=True)
@@ -187,7 +207,7 @@ def prepare_ffmpeg(root: Path, manifest: dict, target: str) -> Path:
             specification[f"{kind}_sha256"],
             root / "downloads" / f"{release}-{name}.gz",
         )
-        output = tools / ((kind + suffix) if kind in {"ffmpeg", "ffprobe"} else kind.upper())
+        output = tools / output_names[kind]
         # Keep installed binaries immutable: Windows locks an executable while it runs.
         if not output.exists():
             decompress(archive, output)
@@ -221,6 +241,16 @@ def prepare_ffmpeg(root: Path, manifest: dict, target: str) -> Path:
         encoding="utf-8",
     )
     return tools
+
+
+def files_match(directory: Path, expected: dict[str, str]) -> bool:
+    try:
+        return all(
+            (directory / name).is_file() and digest(directory / name) == checksum
+            for name, checksum in expected.items()
+        )
+    except OSError:
+        return False
 
 
 def prepare_ffmpeg_bundle(root: Path, specification: dict) -> Path:
@@ -435,21 +465,85 @@ def shortcut_text(wrapper: Path, action: str, windows: bool) -> str:
 
 
 def create_windows_link(shortcut: Path, target: Path) -> None:
-    script = (
-        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:AI_LINK);"
-        "$s.TargetPath=$env:ComSpec;"
-        "$s.Arguments='/d /s /c \"\"'+$env:AI_TARGET+'\"\"';"
-        "$s.WorkingDirectory=[IO.Path]::GetDirectoryName($env:AI_TARGET);"
-        "$s.Description='AI Song Detection local service';$s.WindowStyle=1;$s.Save()"
-    )
-    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-    environment = os.environ | {"AI_LINK": str(shortcut), "AI_TARGET": str(target)}
-    run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-        env=environment,
-        timeout=30,
-        capture=True,
-    )
+    """Use Unicode COM interfaces; WScript.Shell loses non-ANSI desktop paths."""
+    import ctypes
+    import uuid
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("bytes", ctypes.c_ubyte * 16)]
+
+    def guid(value):
+        return GUID.from_buffer_copy(uuid.UUID(value).bytes_le)
+
+    hresult = ctypes.c_int32
+    ole32 = ctypes.WinDLL("ole32")
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    ole32.CoInitializeEx.restype = hresult
+    ole32.CoCreateInstance.argtypes = [
+        ctypes.POINTER(GUID),
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(GUID),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    ole32.CoCreateInstance.restype = hresult
+    ole32.CoUninitialize.argtypes = []
+    ole32.CoUninitialize.restype = None
+
+    def checked(result):
+        if result < 0:
+            raise InstallError(
+                f"Could not create the desktop shortcut (0x{result & 0xFFFFFFFF:08X})."
+            )
+
+    def invoke(pointer, index, result_type, argument_types, *arguments):
+        table = ctypes.cast(pointer, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        function = ctypes.WINFUNCTYPE(result_type, ctypes.c_void_p, *argument_types)(table[index])
+        return function(pointer, *arguments)
+
+    initialized = ole32.CoInitializeEx(None, 2)
+    # An already initialized MTA can still use this in-process COM server.
+    if initialized != -2147417850:  # RPC_E_CHANGED_MODE
+        checked(initialized)
+    shell, persist = ctypes.c_void_p(), ctypes.c_void_p()
+    try:
+        shell_class = guid("00021401-0000-0000-C000-000000000046")
+        shell_interface = guid("000214F9-0000-0000-C000-000000000046")  # IShellLinkW
+        checked(
+            ole32.CoCreateInstance(
+                ctypes.byref(shell_class),
+                None,
+                1,
+                ctypes.byref(shell_interface),
+                ctypes.byref(shell),
+            )
+        )
+        for index, value in (
+            (20, os.environ["COMSPEC"]),  # SetPath
+            (11, f'/d /s /c ""{target}""'),  # SetArguments
+            (9, str(target.parent)),  # SetWorkingDirectory
+            (7, "AI Song Detection local service"),  # SetDescription
+        ):
+            checked(invoke(shell, index, hresult, [ctypes.c_wchar_p], value))
+        checked(invoke(shell, 15, hresult, [ctypes.c_int], 1))  # SetShowCmd
+        persist_interface = guid("0000010B-0000-0000-C000-000000000046")  # IPersistFile
+        checked(
+            invoke(
+                shell,
+                0,
+                hresult,
+                [ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p)],
+                ctypes.byref(persist_interface),
+                ctypes.byref(persist),
+            )
+        )
+        checked(invoke(persist, 6, hresult, [ctypes.c_wchar_p, ctypes.c_int], str(shortcut), 1))
+    finally:
+        for pointer in (persist, shell):
+            if pointer:
+                invoke(pointer, 2, ctypes.c_uint32, [])  # Release
+        if initialized >= 0:
+            ole32.CoUninitialize()
 
 
 def install_entries(root: Path, desktop: Path, python: Path, tools: Path, windows: bool) -> Path:
