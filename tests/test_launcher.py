@@ -134,6 +134,68 @@ def test_graceful_stop_waits_for_worker_after_listener_closes(managed_service, m
     assert time.monotonic() - before >= 0.45
 
 
+@pytest.fixture
+def redirected_service(managed_service, tmp_path, monkeypatch):
+    """A real Python parent starts and waits for a separate HTTP worker."""
+    original = launcher._server_command
+    redirector = tmp_path / "private python redirector.py"
+    redirector.write_text(
+        """
+import json, os, subprocess, sys, time
+from pathlib import Path
+worker = subprocess.Popen(sys.argv[1:])
+Path(os.environ["LAUNCHER_TEST_REDIRECTOR_RECORD"]).write_text(
+    json.dumps({"parent_pid": os.getpid(), "spawned_pid": worker.pid}))
+result = worker.wait()
+time.sleep(float(os.environ.get("LAUNCHER_TEST_REDIRECTOR_EXIT_DELAY", "0")))
+raise SystemExit(result)
+""",
+        encoding="utf-8",
+    )
+    record = tmp_path / "redirector.json"
+    monkeypatch.setenv("LAUNCHER_TEST_REDIRECTOR_RECORD", str(record))
+    monkeypatch.setattr(
+        launcher,
+        "_server_command",
+        lambda port: [sys.executable, str(redirector), *original(port)],
+    )
+    return *managed_service, record
+
+
+def test_redirector_adopts_worker_pid_reuses_and_waits_for_both_processes(
+    redirected_service, monkeypatch
+):
+    state_dir, port, record = redirected_service
+    monkeypatch.setenv("LAUNCHER_TEST_EXIT_DELAY", "0.2")
+    monkeypatch.setenv("LAUNCHER_TEST_REDIRECTOR_EXIT_DELAY", "0.3")
+    first = launcher.launch(port=port, open_browser=False, timeout=5)
+    saved = json.loads((state_dir / "instance.json").read_text())
+    processes = json.loads(record.read_text())
+    assert saved["pid"] == first["pid"] != saved["launcher_pid"]
+    assert launcher._request(first["url"] + "/health")[1]["pid"] == first["pid"]
+    assert launcher.status()["pid"] == first["pid"]
+    assert launcher.launch(port=port, open_browser=False, timeout=5)["reused"] is True
+    before = time.monotonic()
+    assert launcher.stop(timeout=5)["was_running"] is True
+    assert time.monotonic() - before >= 0.45
+    for pid in {saved["pid"], saved["launcher_pid"], *processes.values()}:
+        assert not launcher._process_running(pid)
+    assert not (state_dir / "instance.json").exists()
+
+
+def test_redirector_startup_timeout_cleans_worker_and_parent(redirected_service, monkeypatch):
+    state_dir, port, record = redirected_service
+    monkeypatch.setenv("LAUNCHER_TEST_READY_DELAY", "60")
+    with pytest.raises(launcher.LauncherError, match="did not become ready"):
+        launcher.launch(port=port, open_browser=False, timeout=0.7)
+    processes = json.loads(record.read_text())
+    assert not any(launcher._process_running(pid) for pid in processes.values())
+    assert not (state_dir / "instance.json").exists()
+    assert not launcher._service_lease_held()
+    with socket.socket() as connection:
+        assert connection.connect_ex(("127.0.0.1", port)) != 0
+
+
 def test_failed_start_cleans_owned_process_and_saved_state(managed_service, monkeypatch):
     state_dir, port = managed_service
     monkeypatch.setattr(
@@ -278,6 +340,25 @@ def test_health_pid_mismatch_cannot_be_mistaken_for_our_instance(monkeypatch):
         ),
     )
     assert launcher._health(state) is None
+    assert launcher._health(state, starting=True)["pid"] == 124
+
+
+@pytest.mark.parametrize("changed", [{"instance_id": "foreign"}, {"pid": True}, {"pid": 0}])
+def test_startup_pid_adoption_still_requires_nonce_and_valid_worker_pid(monkeypatch, changed):
+    state = {
+        "url": "http://127.0.0.1:8000",
+        "instance_id": "fresh-instance-nonce",
+        "pid": 123,
+        "version": __version__,
+    }
+    health = {
+        "app_id": launcher.APP_ID,
+        "instance_id": state["instance_id"],
+        "pid": 124,
+        "version": __version__,
+    } | changed
+    monkeypatch.setattr(launcher, "_request", lambda _: (200, health))
+    assert launcher._health(state, starting=True) is None
 
 
 def test_running_lease_without_health_prevents_duplicate_and_preserves_state(

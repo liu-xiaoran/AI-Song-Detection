@@ -9,6 +9,7 @@ import math
 import os
 import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -119,6 +120,10 @@ def _read_state(directory: Path) -> dict | None:
             return None
         if not isinstance(state.get("pid"), int) or state["pid"] <= 0:
             return None
+        if "launcher_pid" in state and (
+            not isinstance(state["launcher_pid"], int) or state["launcher_pid"] <= 0
+        ):
+            return None
         if not all(
             isinstance(state.get(key), str) and state[key]
             for key in ("instance_id", "control_token", "version")
@@ -161,7 +166,7 @@ def _request(url: str, *, token: str | None = None) -> tuple[int, dict] | None:
         return None
 
 
-def _health(state: dict) -> dict | None:
+def _health(state: dict, *, starting: bool = False) -> dict | None:
     response = _request(state["url"] + "/health")
     if not response or not isinstance(response[1], dict):
         return None
@@ -170,7 +175,9 @@ def _health(state: dict) -> dict | None:
         health.get("app_id") != APP_ID
         or health.get("instance_id") != state["instance_id"]
         or health.get("version") != state["version"]
-        or health.get("pid") != state["pid"]
+        or type(health.get("pid")) is not int
+        or health["pid"] <= 0
+        or (not starting and health["pid"] != state["pid"])
     ):
         return None
     return health
@@ -243,6 +250,59 @@ def _require_decoder() -> None:
         )
 
 
+def _cleanup_started_process(child: subprocess.Popen, state: dict, *, identified: bool) -> None:
+    """Stop a just-created server, including children of a Windows venv redirector."""
+    # A redirector's PID differs from the worker PID. Only this fresh startup's
+    # random instance nonce may establish the worker identity; normal health
+    # requests always retain the saved worker PID check.
+    health = _health(state, starting=not identified)
+    if health:
+        state["pid"] = health["pid"]
+        response = _request(state["url"] + "/_control/stop", token=state["control_token"])
+        if response and response[0] == 202:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if child.poll() is not None and not _process_running(state["pid"]):
+                    return
+                time.sleep(0.05)
+    if child.poll() is None:
+        if os.name == "nt":
+            # taskkill applies only to this invocation's still-live Popen tree,
+            # never a PID loaded from instance.json or an adopted health PID.
+            system = Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
+            try:
+                subprocess.run(
+                    [str(system / "System32/taskkill.exe"), "/PID", str(child.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        else:
+            # launch() created a new session, so its process group contains only
+            # the new child and descendants, including a simulated redirector.
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        if child.poll() is None:
+            child.terminate()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if os.name != "nt":
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            child.kill()
+            child.wait(timeout=5)
+
+
 def launch(port: int = 8000, open_browser: bool = True, timeout: float = 45) -> dict:
     """Start/reuse this user's instance and open its page only after readiness."""
     if not isinstance(port, int) or not 1 <= port <= 65535:
@@ -311,11 +371,19 @@ def launch(port: int = 8000, open_browser: bool = True, timeout: float = 45) -> 
                     cwd=str(directory),
                     **options,
                 )
-            state["pid"] = child.pid
+            state["pid"] = state["launcher_pid"] = child.pid
+            identified = False
             try:
                 _write_state(directory, state)
                 while time.monotonic() < deadline:
-                    health = _health(state)
+                    health = _health(state, starting=not identified)
+                    if health and not identified:
+                        # Windows venv python.exe may be a redirector which owns
+                        # the real interpreter. Adopt only the fresh nonce's PID,
+                        # then require that exact worker PID for its lifetime.
+                        state["pid"] = health["pid"]
+                        _write_state(directory, state)
+                        identified = True
                     if health and _ready(health):
                         return _public(
                             state,
@@ -333,15 +401,18 @@ def launch(port: int = 8000, open_browser: bool = True, timeout: float = 45) -> 
                         f"The detector did not become ready within {timeout:g} seconds. See {log_path}"
                     )
             except BaseException:
-                # This handle belongs to the child just created, never a saved/reused PID.
-                if child.poll() is None:
-                    child.terminate()
-                    try:
-                        child.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        child.kill()
-                        child.wait(timeout=5)
-                (directory / "instance.json").unlink(missing_ok=True)
+                try:
+                    _cleanup_started_process(child, state, identified=identified)
+                except Exception as cleanup_error:
+                    with log_path.open("a", encoding="utf-8") as log:
+                        log.write(f"Startup cleanup failed: {cleanup_error}\n")
+                finally:
+                    if _service_lease_held():
+                        # Preserve the authenticated control data if a worker is
+                        # still finishing; do not hide or duplicate that server.
+                        _write_state(directory, state)
+                    else:
+                        (directory / "instance.json").unlink(missing_ok=True)
                 raise
             (directory / "instance.json").unlink(missing_ok=True)
         raise LauncherError(
@@ -421,7 +492,8 @@ def stop(timeout: float = 90) -> dict:
             )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if not _health(state) and not _process_running(state["pid"]):
+            processes = {state["pid"], state.get("launcher_pid", state["pid"])}
+            if not _health(state) and not any(_process_running(pid) for pid in processes):
                 (directory / "instance.json").unlink(missing_ok=True)
                 return {"status": "stopped", "was_running": True}
             time.sleep(0.2)
