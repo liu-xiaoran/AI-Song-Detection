@@ -6,6 +6,7 @@ import io
 import json
 import subprocess
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -218,6 +219,15 @@ def test_windows_wrappers_enable_utf8_before_unicode_paths():
     assert f'call "{wrapper}" launch' in shortcut
 
 
+def test_windows_batch_files_preserve_crlf_for_unicode_commands(tmp_path):
+    wrapper = tmp_path / "ai-song-detection.cmd"
+    installer.write_atomic(wrapper, '@echo off\nchcp 65001 >nul\nset "APP=中文"\nexit /b 0\n')
+    data = wrapper.read_bytes()
+    assert data.decode("utf-8").splitlines()[2] == 'set "APP=中文"'
+    assert data.count(b"\r\n") == 4
+    assert b"\n" not in data.replace(b"\r\n", b"")
+
+
 def test_audio_bundle_repair_preserves_old_directory(tmp_path, monkeypatch):
     source = tmp_path / "archive-source"
     name = "ffmpeg-test-lgpl"
@@ -255,3 +265,80 @@ def test_audio_bundle_repair_preserves_old_directory(tmp_path, monkeypatch):
     assert (repaired / "ffmpeg").read_text() == "original ffmpeg"
     (root / "current.json").write_text(json.dumps({"ffmpeg_directory": str(repaired)}))
     assert installer.prepare_ffmpeg_bundle(root, specification) == repaired
+
+
+def test_windows_audio_repair_preserves_active_binaries(tmp_path, monkeypatch):
+    archives, specification = {}, {}
+    for kind in ("ffmpeg", "ffprobe", "license", "readme"):
+        payload = ("original " + kind).encode()
+        archive = tmp_path / (kind + ".gz")
+        archive.write_bytes(gzip.compress(payload))
+        archives[installer.digest(archive)] = archive
+        specification[kind + "_sha256"] = installer.digest(archive)
+        specification[kind + "_binary_sha256"] = hashlib.sha256(payload).hexdigest()
+    manifest = {"ffmpeg_release": "test", "platforms": {"win32-x64": specification}}
+    root = tmp_path / "Private Windows App"
+    monkeypatch.setattr(installer, "download", lambda url, expected, path: archives[expected])
+    monkeypatch.setattr(
+        installer,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout="GPL build"),
+    )
+    first = installer.prepare_ffmpeg(root, manifest, "win32-x64")
+    (root / "current.json").write_text(json.dumps({"ffmpeg_directory": str(first)}))
+    (first / "ffprobe.exe").write_bytes(b"damaged active file")
+    repaired = installer.prepare_ffmpeg(root, manifest, "win32-x64")
+    assert repaired != first
+    assert (first / "ffprobe.exe").read_bytes() == b"damaged active file"
+    assert (repaired / "ffprobe.exe").read_bytes() == b"original ffprobe"
+    (root / "current.json").write_text(json.dumps({"ffmpeg_directory": str(repaired)}))
+    monkeypatch.setattr(installer, "decompress", lambda *a: pytest.fail("replaced active file"))
+    assert installer.prepare_ffmpeg(root, manifest, "win32-x64") == repaired
+
+
+def test_windows_runtime_is_private_registered_and_corruption_requires_clean_repair(
+    tmp_path, monkeypatch
+):
+    release = tmp_path / "Private App 中文/releases/candidate"
+    license_path = release / "install/licenses/Microsoft-Visual-C-Runtime-LICENSE.docx"
+    license_path.parent.mkdir(parents=True)
+    license_path.write_bytes(b"Microsoft runtime license")
+    archive = tmp_path / "runtime.vsix"
+    archive_path = "Contents/VC/Redist/x64/Microsoft.VC143.CRT/msvcp140.dll"
+    with zipfile.ZipFile(archive, "w") as package:
+        package.writestr(archive_path, b"unmodified release runtime")
+        package.writestr("debug_nonredist/msvcp140d.dll", b"never install debug runtime")
+    specification = {
+        "version": "test",
+        "url": "https://example.test/runtime.vsix",
+        "sha256": installer.digest(archive),
+        "license_sha256": installer.digest(license_path),
+        "files": {
+            "msvcp140.dll": {
+                "archive_path": archive_path,
+                "sha256": hashlib.sha256(b"unmodified release runtime").hexdigest(),
+            }
+        },
+    }
+    monkeypatch.setattr(installer, "download", lambda *a: archive)
+    directory = installer.prepare_windows_runtime(tmp_path, release, specification)
+    assert (directory / "msvcp140.dll").read_bytes() == b"unmodified release runtime"
+    assert not (directory / "msvcp140d.dll").exists()
+    assert (directory / "LICENSE.docx").read_bytes() == license_path.read_bytes()
+    registration = directory.with_suffix(".pth").read_text(encoding="ascii")
+    observed, handle = [], object()
+    monkeypatch.setattr(
+        installer.os,
+        "add_dll_directory",
+        lambda path: observed.append(path) or handle,
+        raising=False,
+    )
+    monkeypatch.setattr(installer.os, "_ai_song_detection_dll_directory", None, raising=False)
+    exec(registration)
+    assert observed == [str(directory)]
+    assert installer.os._ai_song_detection_dll_directory is handle
+    assert installer.prepare_windows_runtime(tmp_path, release, specification) == directory
+    (directory / "msvcp140.dll").write_bytes(b"damaged loaded DLL")
+    with pytest.raises(installer.InstallError, match="clean environment repair"):
+        installer.prepare_windows_runtime(tmp_path, release, specification)
+    assert (directory / "msvcp140.dll").read_bytes() == b"damaged loaded DLL"

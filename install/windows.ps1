@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try {
     $sourceDir = Split-Path -Parent $PSScriptRoot
+    if ([Environment]::OSVersion.Version.Major -lt 10) { throw 'AI Song Detection requires Windows 10 or Windows 11.' }
     $architecture = $env:PROCESSOR_ARCHITECTURE
     if ($env:PROCESSOR_ARCHITEW6432) { $architecture = $env:PROCESSOR_ARCHITEW6432 }
     if ($architecture -ne 'AMD64') { throw 'This installer currently supports 64-bit x86 Windows.' }
@@ -36,6 +37,8 @@ try {
             if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
         }
     }
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses\uv-LICENSE-MIT') -Destination (Join-Path $bootstrap 'LICENSE-MIT') -Force
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses\uv-LICENSE-APACHE') -Destination (Join-Path $bootstrap 'LICENSE-APACHE') -Force
     $env:UV_PYTHON_INSTALL_DIR = Join-Path $installRoot 'runtime\python'
     $env:UV_CACHE_DIR = Join-Path $installRoot 'cache\uv'
     $env:UV_PYTHON_PREFERENCE = 'only-managed'

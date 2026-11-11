@@ -10,11 +10,18 @@ The installers use user-owned directories and do not require Homebrew, Git, an e
 
 The macOS bundles contain FFmpeg 9.0.1, are built for macOS 12 or later, and retain their complete `LICENSES/` directory, replaceable shared libraries, `BUILDINFO.txt`, source URLs, and checksums. They depend only on the included libraries and macOS. The Windows bundle contains FFmpeg 6.1.1 with its complete GPL v3 license, source/build README, download manifest, and actual build configuration. Builds declaring `--enable-nonfree` are rejected. These components retain their own licenses.
 
+The Windows installer also downloads Microsoft's fixed Visual C++ CRT 14.44.35211 package directly from Microsoft. Only the unmodified release DLLs under `x64/Microsoft.VC143.CRT` are extracted; debug and other architecture files are excluded. Archive and individual DLL checksums are pinned. The DLLs, original Microsoft runtime license, and download manifest remain inside each private application environment. An ASCII `.pth` file registers that directory with `os.add_dll_directory` before ONNX Runtime is imported, including when the user's install path contains Unicode characters. This avoids depending on a system-wide Visual C++ installation. Damaged runtime files cause a new environment to be prepared; loaded DLLs are preserved.
+
+Both bootstrap scripts retain uv's original MIT and Apache 2.0 licenses beside their private uv executable. Python retains its upstream license in the managed runtime directory. The installer does not make the downloaded Microsoft or FFmpeg components part of the application's MIT license.
+
 The macOS build originally considered from eugeneware was rejected after its executable reported `--enable-nonfree`; a release's generic license text is insufficient evidence of its actual build configuration.
 
 Sources:
 
 - uv: https://github.com/astral-sh/uv/releases/tag/0.13.5 (Apache 2.0 or MIT).
+- Microsoft CRT package provenance: the fixed Microsoft asset in `dependencies.json`, obtained from the Visual Studio 2022 channel manifest at https://aka.ms/vs/17/release/channel.
+- Microsoft runtime terms: https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/ and the original document retained in `licenses/Microsoft-Visual-C-Runtime-LICENSE.docx`.
+- Microsoft redistributable-file list: https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files.
 - macOS FFmpeg libraries, notices, source tarballs, and build scripts: https://github.com/dfloresc/ffmpeg-macos-builds/releases/tag/v9.0.1-1.
 - Windows FFmpeg binaries and notices: https://github.com/eugeneware/ffmpeg-static/releases/tag/b6.1.1.
 - Windows source and build provenance: the installed platform README and https://github.com/eugeneware/ffmpeg-static/tree/b6.1.1.

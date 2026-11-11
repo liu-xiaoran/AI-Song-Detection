@@ -50,6 +50,8 @@ if [ ! -x "$uv" ]; then
     rm -rf "$stage"
     trap - EXIT HUP INT TERM
 fi
+cp "$source_dir/install/licenses/uv-LICENSE-MIT" "$bootstrap/LICENSE-MIT"
+cp "$source_dir/install/licenses/uv-LICENSE-APACHE" "$bootstrap/LICENSE-APACHE"
 export UV_PYTHON_INSTALL_DIR="$install_root/runtime/python"
 export UV_CACHE_DIR="$install_root/cache/uv"
 export UV_PYTHON_PREFERENCE=only-managed

@@ -183,9 +183,7 @@ def prepare_ffmpeg(root: Path, manifest: dict, target: str) -> Path:
         kind: ((kind + suffix) if kind in {"ffmpeg", "ffprobe"} else kind.upper())
         for kind in assets
     }
-    expected_files = {
-        output_names[kind]: specification[f"{kind}_binary_sha256"] for kind in assets
-    }
+    expected_files = {output_names[kind]: specification[f"{kind}_binary_sha256"] for kind in assets}
     candidates = [tools]
     try:
         preferred = Path(json.loads((root / "current.json").read_text())["ffmpeg_directory"])
@@ -251,6 +249,60 @@ def files_match(directory: Path, expected: dict[str, str]) -> bool:
         )
     except OSError:
         return False
+
+
+def prepare_windows_runtime(root: Path, release: Path, specification: dict) -> Path:
+    """Register the unmodified Microsoft CRT before any native Python extensions load."""
+    site = release / ".venv/Lib/site-packages"
+    directory = site / "ai_song_detection_vc_runtime"
+    registration = site / "ai_song_detection_vc_runtime.pth"
+    # .pth files must be ASCII even for Unicode Windows account/install paths.
+    loader = (
+        "import os; os._ai_song_detection_dll_directory = os.add_dll_directory("
+        + ascii(str(directory))
+        + ")\n"
+    )
+    expected = {name: details["sha256"] for name, details in specification["files"].items()}
+    expected["LICENSE.docx"] = specification["license_sha256"]
+    if directory.exists():
+        if (
+            files_match(directory, expected)
+            and registration.is_file()
+            and registration.read_bytes() == loader.encode("ascii")
+        ):
+            return directory
+        # The caller repairs into a new release rather than replacing loaded DLLs.
+        raise InstallError("The private Windows C++ runtime needs a clean environment repair.")
+    print("Preparing the private Microsoft Visual C++ runtime...", flush=True)
+    archive = download(
+        specification["url"],
+        specification["sha256"],
+        root / "downloads" / ("Microsoft-CRT-" + specification["version"] + "-x64.vsix"),
+    )
+    directory.mkdir(parents=True)
+    try:
+        with zipfile.ZipFile(archive) as package:
+            for name, details in specification["files"].items():
+                if Path(name).name != name or not name.endswith(".dll"):
+                    raise InstallError("A Windows runtime dependency has invalid file metadata.")
+                member = package.getinfo(details["archive_path"])
+                if member.file_size > MAX_BINARY_BYTES:
+                    raise InstallError("A Windows runtime dependency exceeds its size limit.")
+                # Never extract archive paths; whitelist only redistributable release DLLs.
+                (directory / name).write_bytes(package.read(member))
+    except (zipfile.BadZipFile, KeyError) as exc:
+        raise InstallError(
+            "The verified Windows runtime package has an unexpected layout."
+        ) from exc
+    shutil.copy2(
+        release / "install/licenses/Microsoft-Visual-C-Runtime-LICENSE.docx",
+        directory / "LICENSE.docx",
+    )
+    if not files_match(directory, expected):
+        raise InstallError("A private Windows runtime dependency failed its integrity check.")
+    write_atomic(directory / "DOWNLOADS.json", json.dumps(specification, indent=2) + "\n")
+    write_atomic(registration, loader)
+    return directory
 
 
 def prepare_ffmpeg_bundle(root: Path, specification: dict) -> Path:
@@ -417,7 +469,10 @@ def prepare_release(
 def write_atomic(path: Path, text: str, *, executable: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".new")
-    temporary.write_text(text, encoding="utf-8", newline="\n")
+    # cmd.exe can misparse the line after UTF-8 paths in LF-only batch files.
+    temporary.write_text(
+        text, encoding="utf-8", newline="\r\n" if path.suffix.lower() == ".cmd" else "\n"
+    )
     temporary.chmod(0o700 if executable else 0o600)
     temporary.replace(path)
 
@@ -606,6 +661,8 @@ def install(source: Path, uv: Path, root: Path, desktop: Path, *, launch: bool =
     target = platform_key()
     if target.startswith("darwin") and int(platform.mac_ver()[0].split(".")[0]) < 13:
         raise InstallError("AI Song Detection requires macOS 13 or later.")
+    if target.startswith("win32") and sys.getwindowsversion().major < 10:
+        raise InstallError("AI Song Detection requires Windows 10 or Windows 11.")
     if not uv.is_file():
         raise InstallError("The verified private installer could not be found. Run Install again.")
     manifest = json.loads((source / "install/dependencies.json").read_text(encoding="utf-8"))
@@ -657,6 +714,8 @@ def install(source: Path, uv: Path, root: Path, desktop: Path, *, launch: bool =
             )
             print("Checking the bundled model and private audio tools...", flush=True)
             try:
+                if target.startswith("win32"):
+                    prepare_windows_runtime(root, release, manifest["windows_runtime"])
                 run([str(python), "-c", check], env=environment, timeout=90)
                 break
             except InstallError:

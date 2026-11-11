@@ -187,6 +187,77 @@ def synthetic_song(path: Path) -> None:
         audio.writeframes(samples.tobytes())
 
 
+def windows_loaded_runtime(pid: int, install_root: Path) -> dict:
+    """Read the real detector process's DLL paths, without changing the host DLLs."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.K32EnumProcessModules.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.HMODULE),
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    kernel.K32EnumProcessModules.restype = wintypes.BOOL
+    kernel.K32GetModuleFileNameExW.argtypes = (
+        wintypes.HANDLE,
+        wintypes.HMODULE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+    )
+    kernel.K32GetModuleFileNameExW.restype = wintypes.DWORD
+    process = kernel.OpenProcess(0x0400 | 0x0010, False, pid)  # QUERY_INFORMATION | VM_READ.
+    if not process:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        capacity = 256
+        while True:
+            modules = (wintypes.HMODULE * capacity)()
+            needed = wintypes.DWORD()
+            if not kernel.K32EnumProcessModules(
+                process, modules, ctypes.sizeof(modules), ctypes.byref(needed)
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if needed.value <= ctypes.sizeof(modules):
+                break
+            capacity = needed.value // ctypes.sizeof(wintypes.HMODULE) + 64
+            check(capacity <= 4096, "The detector module list exceeded its verification limit")
+        paths = {}
+        for module in modules[: needed.value // ctypes.sizeof(wintypes.HMODULE)]:
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = kernel.K32GetModuleFileNameExW(process, module, buffer, len(buffer))
+            if not length:
+                raise ctypes.WinError(ctypes.get_last_error())
+            check(length < len(buffer), "A loaded module path was truncated")
+            paths[Path(buffer.value).name.casefold()] = buffer.value
+        required = ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+        check(
+            all(name in paths for name in required),
+            "The real ONNX process did not load all required C++ runtime DLLs",
+        )
+        expected_root = install_root.resolve()
+        for name in (*required, "onnxruntime_pybind11_state.pyd"):
+            check(name in paths, f"The real detector process has no loaded {name}")
+            check(
+                Path(paths[name]).resolve().is_relative_to(expected_root),
+                f"The detector loaded {name} from a host/global location: {paths[name]}",
+            )
+        return {
+            "process_pid": pid,
+            "modules": {name: paths[name] for name in required},
+            "onnxruntime_extension": paths["onnxruntime_pybind11_state.pyd"],
+            "all_runtime_modules_private": True,
+            "method": "Read-only OpenProcess + K32EnumProcessModules/K32GetModuleFileNameExW on the actual inference service after a real upload; no host DLLs were replaced or unloaded.",
+        }
+    finally:
+        kernel.CloseHandle(process)
+
+
 @contextlib.contextmanager
 def temporary_environment(environment: dict):
     previous = os.environ.copy()
@@ -407,6 +478,9 @@ def verify(source: Path, work: Path, report: Path, browser: bool, evidence: dict
             "Real model HTTP inference failed",
         )
         evidence["inference"] = result
+        if WINDOWS:
+            evidence["windows_cpp_runtime"] = windows_loaded_runtime(first["pid"], root)
+            checks["actual_windows_runtime_modules_private"] = True
         code, error = json_http(first["url"] + "/api/v1/detect", audio=corrupt)
         check(
             code == 422 and error["detail"]["code"] == "invalid_audio",
