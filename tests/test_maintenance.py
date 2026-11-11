@@ -202,14 +202,73 @@ def test_diagnostics_omits_raw_sensitive_files(installed, monkeypatch, tmp_path)
 
 
 @pytest.mark.parametrize(
-    "name", ["../escape", "/absolute/file", "folder/../../escape", "C:/file", "root\\escape"]
+    "name",
+    [
+        "../escape",
+        "/absolute/file",
+        "folder/../../escape",
+        "C:/file",
+        "root\\escape",
+        "\\root/escape",
+        "//server/share/file",
+        "root/..",
+        ".",
+        "root//file",
+        "root/./file",
+        "root/nul\x00suffix",
+    ],
 )
 def test_update_rejects_archive_path_escape(name, tmp_path):
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
-        archive.writestr(name, "escape")
+        # Construct actual raw ZIP names on every OS. ZipInfo(name) otherwise
+        # sanitizes backslashes/NULs before the dangerous fixture is even written.
+        member = zipfile.ZipInfo("placeholder")
+        member.filename = name
+        archive.writestr(member, "escape")
     with pytest.raises(maintenance.MaintenanceError, match="unsafe"):
         maintenance._extract_source(payload.getvalue(), tmp_path / "extract")
+    assert not (tmp_path / "extract").exists()
+
+
+def test_update_validates_original_name_before_windows_zip_normalization(tmp_path, monkeypatch):
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        member = zipfile.ZipInfo("placeholder")
+        member.filename = "root\\escape"
+        archive.writestr(member, "escape")
+    original_infolist = zipfile.ZipFile.infolist
+
+    def windows_normalized_members(archive):
+        members = original_infolist(archive)
+        for member in members:
+            member.filename = member.filename.replace("\\", "/")
+        return members
+
+    monkeypatch.setattr(zipfile.ZipFile, "infolist", windows_normalized_members)
+    with pytest.raises(maintenance.MaintenanceError, match="unsafe"):
+        maintenance._extract_source(payload.getvalue(), tmp_path / "extract")
+
+
+def test_update_accepts_normal_posix_archive_with_root_directory_member(tmp_path):
+    source = tmp_path / "source"
+    for name in installer.PAYLOAD:
+        path = source / name
+        if name in {"src", "third_party", "install"}:
+            path.mkdir(parents=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(name)
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("project-main/", b"")
+        for name in ("src", "third_party", "install"):
+            archive.writestr("project-main/" + name + "/", b"")
+        for path, relative in installer.payload_files(source):
+            archive.writestr("project-main/" + relative.as_posix(), path.read_bytes())
+    extracted = maintenance._extract_source(payload.getvalue(), tmp_path / "extract")
+    assert extracted == tmp_path / "extract/project-main"
+    assert installer.payload_digest(extracted) == installer.payload_digest(source)
 
 
 def test_update_pins_commit_to_own_repository_before_install(installed, monkeypatch, tmp_path):

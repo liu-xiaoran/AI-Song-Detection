@@ -118,7 +118,7 @@ def test_editable_app_and_machine_specific_cache_entries_are_not_exported(instal
     ):
         path = root / "cache/uv" / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(str(root / "releases/old-release"))
+        path.write_text(str(root / "releases/old-release"), encoding="utf-8")
     bundle.create(destination)
     assert not (destination / "data/cache/uv/builds-v0").exists()
     assert not (destination / "data/cache/uv/interpreter-v4").exists()

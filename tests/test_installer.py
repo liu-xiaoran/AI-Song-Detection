@@ -212,7 +212,7 @@ def test_windows_wrappers_enable_utf8_before_unicode_paths():
         True,
     )
     assert text.index("chcp 65001 >nul") < text.index("中文")
-    assert 'set "AI_SONG_DETECTION_INSTALL_DIR=C:/Users/中文 User"' in text
+    assert f'set "AI_SONG_DETECTION_INSTALL_DIR={Path("C:/Users/中文 User")}"' in text
     assert "if defined AI_PREVIOUS_CODEPAGE chcp %AI_PREVIOUS_CODEPAGE% >nul" in text
     assert f'"{python}" -m ai_song_detection %*' in text
     shortcut = installer.shortcut_text(wrapper, "launch", True)

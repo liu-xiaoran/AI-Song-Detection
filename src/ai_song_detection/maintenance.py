@@ -17,7 +17,7 @@ import urllib.request
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import __version__, installer, launcher
 
@@ -289,15 +289,21 @@ def _extract_source(payload: bytes, destination: Path) -> Path:
         if len(names) > 20000:
             raise MaintenanceError("The update archive contains too many files.")
         for info in names:
-            path = Path(info.filename)
+            # ZIP names always use POSIX separators. ZipInfo.filename normalizes
+            # backslashes on Windows and truncates NULs, so validate the original
+            # central-directory name before any host-specific transformation.
+            filename = info.orig_filename
+            path = PurePosixPath(filename)
             mode = info.external_attr >> 16
             total += info.file_size
             if (
                 not path.parts
                 or path.is_absolute()
                 or ".." in path.parts
-                or "\\" in info.filename
-                or ":" in info.filename
+                or "\\" in filename
+                or ":" in filename
+                or "\x00" in filename
+                or path.as_posix() != filename.removesuffix("/")
                 or stat.S_ISLNK(mode)
                 or total > 600 * 1024 * 1024
             ):
