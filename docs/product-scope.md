@@ -4,6 +4,16 @@
 
 Provide fast, affordable, local screening for AI-generated songs. The application includes a web interface, HTTP API, command line, and a bundled CPU-only ONNX detector based on [lofcz/ai-music-detector](https://github.com/lofcz/ai-music-detector). No model download, external audio upload, GPU, or training dataset is required for inference.
 
+## Desktop workflow
+
+macOS Apple Silicon/Intel and Windows x64 have user-level installation entry points. The first installation prepares a private runtime, decoder, dependencies, and independent application copy, then creates desktop start and stop entries. Installation needs network access; daily launch and inference use the installed files offline.
+
+The same launcher backs desktop entries and the `launch`, `status`, and `stop` commands. It prevents duplicate managed instances, identifies its own service before reusing it, chooses a free local port when the preferred port is occupied, and opens the default browser after readiness. The foreground `serve` command remains available for development and manually managed operation.
+
+The main interface stays focused on choosing a song and reading its result. It checks connection readiness periodically, disables analysis while disconnected or busy, and offers `Retry connection` while preserving the selected file. Closing a browser tab leaves the service running; a stop entry or command requests graceful shutdown.
+
+The script installers do not modify global PATH or disable system security protections. Unsigned-download warnings and enterprise restrictions may still apply. An installer entry point and source tests do not by themselves prove successful installation on every supported platform; see [Verification](verification.md).
+
 The detector analyzes spectral fakeprint features in the first 300 seconds of a recording. It targets known Suno ≤ 5 and Udio ≤ 1.5 artifacts. It does not validate every AI generator, identify a generator, locate generated passages, or determine authorship or copyright ownership.
 
 ## Inputs

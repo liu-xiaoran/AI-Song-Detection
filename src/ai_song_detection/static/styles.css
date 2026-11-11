@@ -32,6 +32,11 @@ a { color: inherit; }
 .status-dot { width: 6px; height: 6px; flex-shrink: 0; background: #9aa49d; border-radius: 50%; }
 .service-status.ready .status-dot { background: #527d32; box-shadow: 0 0 0 3px #e7eddd; }
 .service-status.unavailable .status-dot { background: #b47730; }
+.connection-notice { border: 1px solid #dfcda6; background: #fff9ed; color: #6c562d; padding: 12px; border-radius: 6px; font-size: 12px; margin-bottom: 16px; }
+.connection-notice p { margin: 0 0 10px; }
+.retry-connection { border: 1px solid #c8b88f; background: #fffdf8; color: #5c4c2c; padding: 7px 11px; border-radius: 5px; font-size: 12px; }
+.retry-connection:hover:enabled { background: #f2e9d5; }
+.retry-connection:disabled { opacity: .6; }
 .intro { padding: 57px 0 36px; }
 .eyebrow { margin: 0 0 18px; letter-spacing: 2px; font-size: 10px; font-weight: 650; }
 h1 { margin: 0; font-size: clamp(48px, 5.4vw, 68px); font-weight: 500; letter-spacing: -3.4px; line-height: 1.06; }

@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import os
+import secrets
 import shutil
 import tempfile
 from contextlib import asynccontextmanager
@@ -11,10 +13,11 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import __version__
+from . import APP_ID, __version__
 from .detector import AudioError, Detector
 from .schemas import DetectionResult
 
@@ -79,6 +82,8 @@ class BodyLimitMiddleware:
 async def lifespan(app: FastAPI):
     app.state.detector = Detector()
     app.state.active_request = False
+    app.state.instance_id = os.environ.get("AI_SONG_DETECTION_INSTANCE_ID", "")
+    app.state.control_token = os.environ.get("AI_SONG_DETECTION_CONTROL_TOKEN", "")
     yield
 
 
@@ -138,12 +143,39 @@ async def health(request: Request):
     ffmpeg = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
     return JSONResponse(
         {
+            "app_id": APP_ID,
+            "instance_id": getattr(request.app.state, "instance_id", ""),
+            "pid": os.getpid(),
             "status": "ok" if loaded and ffmpeg else "degraded",
             "version": __version__,
             "model_loaded": loaded,
             "ffmpeg_available": ffmpeg,
         },
         status_code=200 if loaded and ffmpeg else 503,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/_control/stop", include_in_schema=False)
+async def stop_managed_service(request: Request):
+    """Private launcher control; never accept browser-originated shutdown requests."""
+    token = getattr(request.app.state, "control_token", "")
+    shutdown = getattr(request.app.state, "request_shutdown", None)
+    if not token or not callable(shutdown):
+        raise HTTPException(404, detail="Not found")
+    provided = request.headers.get("X-AI-Song-Control", "")
+    if (
+        not request.client
+        or request.client.host not in {"127.0.0.1", "::1"}
+        or "origin" in request.headers
+        or not secrets.compare_digest(provided.encode("utf-8"), token.encode("utf-8"))
+    ):
+        raise HTTPException(403, detail="Control request denied")
+    return JSONResponse(
+        {"status": "stopping"},
+        status_code=202,
+        headers={"Cache-Control": "no-store"},
+        background=BackgroundTask(shutdown),
     )
 
 

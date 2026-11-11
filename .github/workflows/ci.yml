@@ -24,4 +24,46 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node --test tests/browser/connection.test.cjs
       - run: uv build
+
+  desktop:
+    name: Desktop install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel, windows-2025]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+          python-version: "3.12"
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: uv sync --frozen
+      - run: uv run playwright install chromium
+      - name: Verify native installer, desktop entry, offline relaunch, and browser UI
+        shell: bash
+        run: >-
+          uv run python scripts/desktop_smoke.py
+          --source "$GITHUB_WORKSPACE"
+          --work-dir "$RUNNER_TEMP/desktop-install"
+          --report-dir "$RUNNER_TEMP/desktop-verification"
+          --browser
+      - run: uv run pytest -q
+      - run: node --test tests/browser/connection.test.cjs
+      - name: Retain desktop verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: ${{ runner.temp }}/desktop-verification
+          if-no-files-found: warn

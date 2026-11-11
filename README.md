@@ -4,35 +4,50 @@ Run AI music screening locally through a web interface, HTTP API, or command lin
 
 The small ONNX model is included. Audio is processed on the machine running the application and is not sent to an external detection service.
 
-## Quick start
+## Desktop installation
 
-Requirements: Python 3.11–3.13, [uv](https://docs.astral.sh/uv/getting-started/installation/), and FFmpeg with `ffprobe` on your `PATH`.
+Download and extract this project, then run the installer for your computer:
 
-```bash
-# macOS
-brew install uv ffmpeg
+| Platform | First installation |
+| --- | --- |
+| macOS 13 or newer, Apple Silicon or Intel | Double-click `Install.command`. |
+| Windows, x64 | Double-click `Install.cmd`. |
 
-# From the repository root
-uv sync --frozen
-./start.sh
-```
+The installer prepares private Python, FFmpeg/ffprobe, and application dependencies, creates desktop start and stop entries, and opens the application. Use `--no-launch` to install without opening a browser. It does not require an existing Python installation, Git, Homebrew, or administrator access, and does not change your global PATH. The first installation requires an internet connection. Downloaded components are pinned and checksum-verified; see [installer dependencies](install/README.md).
 
-On Debian/Ubuntu, install FFmpeg with `sudo apt-get install ffmpeg` and install uv using its installation guide. Open [http://127.0.0.1:8000](http://127.0.0.1:8000), choose an audio file, and select **Analyze track**. The default listener accepts connections from this machine only.
+After installation, double-click the desktop **AI Song Detection** entry. The launcher starts the local service, waits for the model and decoder to be ready, and opens your default browser. Select or drop an audio file and choose **Analyze track**. Later launches and detection work offline. The installed copy is independent of the extracted source folder.
 
-To use another local port:
+Repeated clicks reopen the existing instance. If the preferred port is occupied by another application, the launcher chooses an available port. Closing the browser does not stop the detector; use the desktop **Stop AI Song Detection** entry or the `stop` command when finished.
 
-```bash
-./start.sh --port 8001
-```
+macOS or Windows may show an origin or security warning for unsigned downloaded scripts. The installer does not disable Gatekeeper, SmartScreen, or enterprise security policy. These script installers are not signed consumer application packages.
+
+See [Operations](docs/operations.md) for installation paths, command-line launch, logs, and troubleshooting. Platform verification evidence is recorded separately in [Verification](docs/verification.md).
 
 ### Command line
 
+The installer prints its command-wrapper path. For example, launch the installed copy with:
+
 ```bash
+# macOS
+"$HOME/Library/Application Support/AI Song Detection/bin/ai-song-detection" launch
+```
+
+```powershell
+# Windows PowerShell
+& "$env:LOCALAPPDATA\AI Song Detection\bin\ai-song-detection.cmd" launch
+```
+
+The same wrapper accepts `status`, `stop`, and `detect`. From a development checkout, use:
+
+```bash
+uv run ai-song-detection launch
+uv run ai-song-detection status
+uv run ai-song-detection stop
 uv run ai-song-detection detect song.mp3
 uv run ai-song-detection detect song.mp3 another-song.flac --json
 ```
 
-JSON mode writes one JSON object per input file. The command exits with status 1 if any file fails.
+`launch` manages a background instance and opens the default browser. `serve` remains available for foreground operation, stopped with Ctrl+C. The launcher's `--no-browser` option is useful for automated checks. Detection JSON mode writes one JSON object per input file and exits with status 1 if any file fails.
 
 ### HTTP API
 
@@ -41,7 +56,7 @@ curl -F 'file=@song.mp3' http://127.0.0.1:8000/api/v1/detect
 curl http://127.0.0.1:8000/health
 ```
 
-Interactive API documentation is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs). See [Operations](docs/operations.md) for response fields, limits, and errors.
+Use the address printed by `launch` or `status`; replace port `8000` in these examples if another was selected. Interactive API documentation is at `/docs` on that address. See [Operations](docs/operations.md) for response fields, limits, and errors.
 
 ### Docker
 
@@ -71,11 +86,17 @@ Local CPU inference avoids per-request detection service fees. Latency and actua
 
 ## Development
 
+Development requires Python 3.11–3.13, [uv](https://docs.astral.sh/uv/getting-started/installation/), and FFmpeg/ffprobe on PATH. The desktop installer prepares its own environment instead.
+
 ```bash
 uv sync --frozen
+uv run ai-song-detection launch
 uv run pytest
 uv run ruff check .
+node --test tests/browser/connection.test.cjs
 ```
+
+On macOS/Linux, `./start.sh` launches an already-created development environment without syncing or downloading dependencies. Use `uv run ai-song-detection serve --port 8001` for a foreground service at a chosen port.
 
 Project content is in English. Keep credentials and private audio out of Git. The bundled, attributed model is the intentional exception to the general rule against committing model artifacts.
 

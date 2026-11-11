@@ -30,6 +30,10 @@
       <div class="workspace">
         <section class="upload-panel panel" aria-labelledby="upload-title">
           <div class="panel-heading"><span class="step-number">01</span><h2 id="upload-title">Choose your track</h2></div>
+          <div class="connection-notice" id="connection-notice" role="status" hidden>
+            <p>The detector is not connected. Reopen <strong>AI Song Detection</strong> from your desktop, then retry. Your selected track stays here.</p>
+            <button class="retry-connection" id="retry-connection" type="button">Retry connection</button>
+          </div>
           <form id="upload-form">
             <div class="drop-zone" id="drop-zone">
               <input class="file-input" id="audio-file" name="file" type="file" accept=".mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aiff,.aif,.wma" aria-describedby="file-help">

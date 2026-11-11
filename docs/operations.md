@@ -1,26 +1,66 @@
 # Operations
 
-## Run locally
+## Install and open from the desktop
 
-Requirements: Python 3.11–3.13, uv, and FFmpeg including `ffprobe` on `PATH`.
+Extract the complete project archive, then double-click `Install.command` on macOS or `Install.cmd` on Windows x64. macOS Apple Silicon and Intel have separate pinned native components, selected automatically. The initial installation downloads a private uv/Python runtime, FFmpeg/ffprobe, and locked application dependencies. No existing Python, Git, Homebrew, or administrator access is required.
+
+| Location | macOS | Windows |
+| --- | --- | --- |
+| Application root | `~/Library/Application Support/AI Song Detection` | `%LOCALAPPDATA%\AI Song Detection` |
+| Managed service state and logs | `state/` below the application root | `state\` below the application root |
+| Command wrapper | `bin/ai-song-detection` below the application root | `bin\ai-song-detection.cmd` below the application root |
+| Desktop start entry | `AI Song Detection.command` | `AI Song Detection.lnk` |
+| Desktop stop entry | `Stop AI Song Detection.command` | `Stop AI Song Detection.lnk` |
+
+The installer creates an independent application copy in `releases/<source-hash>/`, with its own virtual environment. `current.json` records the selected release, Python, and decoder paths; the command wrapper uses those installed paths. The extracted source folder is not needed afterward. Runtime downloads and cached packages remain under the application root. No global PATH or system Python is changed. See [installer dependency provenance](../install/README.md) for pinned versions, checksums, and component notices.
+
+Installation opens the app by default. Pass `--no-launch` to the installation entry to skip that step. For an isolated installation, set `AI_SONG_DETECTION_INSTALL_DIR` and `AI_SONG_DETECTION_DESKTOP_DIR` before running the entry; these overrides apply to the bootstrap and the application installer together. Failed setup can be retried. Candidate checks run before switching releases; older release directories are retained. There is no separate automatic-update or uninstall command.
+
+Double-click the start entry to launch or reopen the app in the default browser. The service runs in the background. A healthy existing instance is reused; an occupied preferred port leads to another available local port. The launcher waits for model and decoder readiness before opening the browser. Failure messages identify the service log rather than opening an unusable page.
+
+Closing a browser tab or its window leaves the detector running. Use the desktop stop entry or the `stop` command to exit gracefully. Reopen the start entry to resume. Daily launch and detection do not download dependencies or update the application.
+
+Unsigned-download checks may produce macOS Gatekeeper or Windows SmartScreen warnings. The Windows bootstrap uses a process-scoped PowerShell policy option and does not change global execution policy; enterprise policy can still block it. The installer does not disable operating-system protections. These entry scripts are not signed/notarized consumer installers.
+
+## Command-line lifecycle and development
+
+The installed wrapper exposes the same interface as the package:
 
 ```bash
-uv sync --frozen
-./start.sh
+# macOS
+"$HOME/Library/Application Support/AI Song Detection/bin/ai-song-detection" launch
+"$HOME/Library/Application Support/AI Song Detection/bin/ai-song-detection" status --json
+"$HOME/Library/Application Support/AI Song Detection/bin/ai-song-detection" stop
 ```
 
-The default address is `http://127.0.0.1:8000`. Stop the foreground process with Ctrl+C. To change the port, use `./start.sh --port 8001`. `start.sh` synchronizes locked runtime dependencies without the development group before starting the server.
+```powershell
+# Windows PowerShell
+& "$env:LOCALAPPDATA\AI Song Detection\bin\ai-song-detection.cmd" launch
+& "$env:LOCALAPPDATA\AI Song Detection\bin\ai-song-detection.cmd" status --json
+& "$env:LOCALAPPDATA\AI Song Detection\bin\ai-song-detection.cmd" stop
+```
 
-For an existing virtual environment without uv, run `pip install -e .` and then `ai-song-detection serve`. The lockfile-based uv workflow is preferred for reproducibility.
+From an already-prepared development checkout:
 
 ```bash
-# Local files, one JSON result per file
+uv run ai-song-detection launch
+uv run ai-song-detection launch --port 8001 --no-browser --json
+uv run ai-song-detection status --json
+uv run ai-song-detection stop --json
 uv run ai-song-detection detect song.mp3 another-song.wav --json
-
-# Container with FFmpeg included
-# Host port is bound to 127.0.0.1 by compose.yaml.
-docker compose up --build
 ```
+
+`launch` prefers port 8000 but prints the actual selected address. `status` reports a running, identity-verified managed instance, its address, version, PID, and log path. The default startup timeout is 45 seconds. `stop` requests graceful shutdown and waits up to 90 seconds by default; it does not terminate another application based on an old PID file. JSON output never contains the private control token.
+
+Private instance state is protected by a per-user file lock. The service identity includes application, instance, and version fields. Start and stop operations use localhost directly, independently of HTTP proxy environment settings. Browser-originated stop requests are denied; the command uses a private instance token.
+
+The service log is `state/service.log` under the application root. A log over 5 MiB is moved to `service.log.1` at the next start. If launch fails, inspect the printed log path. A missing decoder should be repaired through the installer. A startup error does not justify terminating the program occupying the preferred port.
+
+Development requires Python 3.11–3.13, uv, and FFmpeg/ffprobe on PATH. Run `uv sync --frozen` once to prepare the checkout. `./start.sh` on macOS/Linux launches its existing virtual environment without dependency synchronization. For a foreground service, use `uv run ai-song-detection serve --port 8001` and stop it with Ctrl+C. Foreground `serve` is independent of the managed instance and is not stopped by the managed `stop` command.
+
+For an existing virtual environment without uv, run `pip install -e .` and then use its `ai-song-detection` executable. The lockfile-based uv workflow is preferred for reproducibility.
+
+For Docker, run `docker compose up --build`; Compose binds the host port to `127.0.0.1:8000`. Container lifecycle is managed with Docker, separately from the desktop launcher's state.
 
 The model is bundled and checksum-verified at startup. An invalid or missing model prevents startup. CPU inference uses one ONNX Runtime thread and needs no external detection service. Package installation and image builds need network access; inference does not.
 
@@ -49,7 +89,9 @@ Successful requests return HTTP 200 with these fields:
 
 Scores below 0.4 produce `likely_human_created`; scores above 0.6 produce `likely_ai_generated`; both endpoints and the values between them produce `uncertain`. This policy has not been independently validated.
 
-`GET /health` returns `status`, application `version`, `model_loaded`, and `ffmpeg_available`. HTTP 200 means model and both FFmpeg executables are available; HTTP 503 reports `degraded` if a required capability is missing. Availability checks do not prove that every codec works. `GET /docs` provides interactive documentation and `GET /openapi.json` exposes the schema.
+`GET /health` returns `app_id`, `instance_id`, `pid`, `status`, application `version`, `model_loaded`, and `ffmpeg_available`, with a no-store cache header. `app_id` is `ai-song-detection`; an unmanaged foreground service has an empty instance ID. HTTP 200 means model and both FFmpeg executables are available; HTTP 503 reports `degraded` if a required capability is missing. Availability checks do not prove that every codec works. `GET /docs` provides interactive documentation and `GET /openapi.json` exposes the schema.
+
+The main page polls readiness every five seconds while visible, and checks again before submitting audio. Connection loss disables analysis and presents `Retry connection`; the selected track remains available after reconnecting. A request failure does not leave a previous result displayed as the new result.
 
 ## Input and resource limits
 
@@ -101,6 +143,7 @@ Compose uses a non-root user, a read-only root filesystem, 512 MiB of temporary 
 uv sync --frozen
 uv run pytest
 uv run ruff check .
+node --test tests/browser/connection.test.cjs
 ```
 
 Tests verify implementation behavior and preprocessing compatibility. Establish accuracy, latency, and cost separately using the [Evaluation Plan](evaluation.md).

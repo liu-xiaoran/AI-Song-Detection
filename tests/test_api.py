@@ -68,6 +68,46 @@ def test_api_docs_use_local_assets(client):
     assert api.get("/static/api-docs.js").status_code == 200
 
 
+def test_health_identifies_the_app_without_disclosing_control_token(client):
+    api, _ = client
+    server.app.state.control_token = "private-control-token"
+    health = api.get("/health")
+    assert health.json()["app_id"] == "ai-song-detection"
+    assert "instance_id" in health.json()
+    assert "private-control-token" not in health.text
+    assert health.headers["cache-control"] == "no-store"
+
+
+def test_shutdown_is_disabled_for_unmanaged_service(client):
+    api, _ = client
+    assert api.post("/_control/stop").status_code == 404
+
+
+def test_managed_shutdown_requires_private_token_and_no_browser_origin(client):
+    calls = []
+    server.app.state.control_token = "test-only-secret"
+    server.app.state.request_shutdown = lambda: calls.append("stopping")
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=server.app, client=("127.0.0.1", 12345))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api:
+            assert (await api.post("/_control/stop")).status_code == 403
+            headers = {"X-AI-Song-Control": "test-only-secret", "origin": "http://testserver"}
+            assert (await api.post("/_control/stop", headers=headers)).status_code == 403
+            assert calls == []
+            response = await api.post(
+                "/_control/stop", headers={"X-AI-Song-Control": "test-only-secret"}
+            )
+            assert response.status_code == 202
+            assert response.json() == {"status": "stopping"}
+            assert calls == ["stopping"]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        del server.app.state.request_shutdown
+
+
 def test_success_sanitizes_filename_and_removes_temporary_file(client):
     api, detector = client
     response = api.post("/api/v1/detect", files={"file": ("../../song.wav", b"test", "audio/wav")})

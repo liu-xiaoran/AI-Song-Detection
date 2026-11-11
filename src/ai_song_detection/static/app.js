@@ -11,10 +11,18 @@ const processStatus = document.getElementById("process-status");
 const resultPanel = document.getElementById("result-panel");
 const emptyResult = document.getElementById("empty-result");
 const result = document.getElementById("detection-result");
+const retryConnection = document.getElementById("retry-connection");
+const connectionNotice = document.getElementById("connection-notice");
 const allowedExtensions = new Set(["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "aiff", "aif", "wma"]);
 const maxBytes = 100 * 1024 * 1024;
 let currentFile = null;
 let busy = false;
+let serviceReady = false;
+let healthCheck = null;
+
+function updateAnalyzeButton() {
+  analyzeButton.disabled = busy || !currentFile || !serviceReady;
+}
 
 function showError(message) {
   errorMessage.textContent = message;
@@ -65,7 +73,7 @@ function selectFile(file) {
     ? `${Math.max(1, Math.round(file.size / 1024))} KB`
     : `${(file.size / 1024 / 1024).toFixed(1)} MB`;
   selectedFile.hidden = false;
-  analyzeButton.disabled = false;
+  updateAnalyzeButton();
 }
 
 fileInput.addEventListener("change", () => selectFile(fileInput.files[0]));
@@ -100,7 +108,7 @@ dropZone.addEventListener("drop", (event) => {
 
 function setBusy(value) {
   busy = value;
-  analyzeButton.disabled = value || !currentFile;
+  updateAnalyzeButton();
   analyzeButton.classList.toggle("processing", value);
   fileInput.disabled = value;
   removeButton.disabled = value;
@@ -169,7 +177,7 @@ function showResult(data) {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!currentFile || busy) return;
+  if (!currentFile || busy || !serviceReady) return;
   clearError();
   hideResult();
   setBusy(true);
@@ -179,6 +187,11 @@ form.addEventListener("submit", async (event) => {
   const body = new FormData();
   body.append("file", currentFile);
   try {
+    if (!await checkHealth()) {
+      hideResult();
+      processStatus.textContent = "";
+      return;
+    }
     const response = await fetch("/api/v1/detect", { method: "POST", body });
     let data;
     try {
@@ -194,32 +207,54 @@ form.addEventListener("submit", async (event) => {
   } catch (error) {
     hideResult();
     processStatus.textContent = "";
-    showError(error instanceof TypeError ? "Could not reach the detector. Check that the server is running and try again." : error.message || "Analysis failed. Please try again.");
+    if (error instanceof TypeError) {
+      setConnection(false, "Connection unavailable");
+    }
+    showError(error instanceof TypeError ? "Could not reach the detector. Reopen AI Song Detection from your desktop, then retry the connection." : error.message || "Analysis failed. Please try again.");
   } finally {
     setBusy(false);
   }
 });
 
-async function checkHealth() {
+function setConnection(ready, message) {
+  serviceReady = ready;
   const status = document.getElementById("service-status");
   const label = document.getElementById("service-label");
-  try {
-    const response = await fetch("/health", { signal: AbortSignal.timeout(10000) });
-    const health = await response.json();
-    if (health.model_loaded && health.ffmpeg_available === false) {
-      status.classList.add("unavailable");
-      label.textContent = "Limited format support";
-    } else if (response.ok && health.model_loaded) {
-      status.classList.add("ready");
-      label.textContent = "Detector ready";
-    } else {
-      status.classList.add("unavailable");
-      label.textContent = "Detector unavailable";
-    }
-  } catch {
-    status.classList.add("unavailable");
-    label.textContent = "Connection unavailable";
-  }
+  status.classList.toggle("ready", ready);
+  status.classList.toggle("unavailable", !ready);
+  label.textContent = message;
+  connectionNotice.hidden = ready;
+  updateAnalyzeButton();
 }
 
+function checkHealth() {
+  if (healthCheck) return healthCheck;
+  retryConnection.disabled = true;
+  healthCheck = (async () => {
+    try {
+      const response = await fetch("/health", { cache: "no-store", signal: AbortSignal.timeout(4000) });
+      const health = await response.json();
+      const ready = response.ok && health.app_id === "ai-song-detection" && health.model_loaded === true && health.ffmpeg_available === true;
+      setConnection(Boolean(ready), ready ? "Detector ready" : "Detector unavailable");
+      return Boolean(ready);
+    } catch {
+      setConnection(false, "Connection unavailable");
+      return false;
+    } finally {
+      retryConnection.disabled = false;
+      healthCheck = null;
+    }
+  })();
+  return healthCheck;
+}
+
+retryConnection.addEventListener("click", checkHealth);
+window.addEventListener("online", checkHealth);
+window.addEventListener("focus", checkHealth);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) checkHealth();
+});
+setInterval(() => {
+  if (!document.hidden) checkHealth();
+}, 5000);
 checkHealth();

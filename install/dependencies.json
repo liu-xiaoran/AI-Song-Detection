@@ -1,0 +1,40 @@
+{
+  "uv_version": "0.13.5",
+  "python_version": "3.12",
+  "ffmpeg_release": "b6.1.1",
+  "ffmpeg_repository": "https://github.com/eugeneware/ffmpeg-static",
+  "platforms": {
+    "darwin-arm64": {
+      "uv_target": "aarch64-apple-darwin",
+      "uv_sha256": "743f85035a1996ecb350659e01cd9faea9709829be09b1b4b03c73eaf3c9cd73",
+      "ffmpeg_bundle": {
+        "url": "https://github.com/dfloresc/ffmpeg-macos-builds/releases/download/v9.0.1-1/ffmpeg-9.0.1-1-lgpl-macos-arm64.tar.xz",
+        "sha256": "d0ea5ea43a5adfa5d01d4137c9e5a61728b800a812f12917a26fd7af0c14c03a",
+        "directory": "ffmpeg-9.0.1-1-lgpl-macos-arm64",
+        "source": "https://github.com/dfloresc/ffmpeg-macos-builds/releases/tag/v9.0.1-1"
+      }
+    },
+    "darwin-x64": {
+      "uv_target": "x86_64-apple-darwin",
+      "uv_sha256": "b0f52b0e3945b4107d89024ea38e625683011fbfc05a0d98f9fa2d6dcee28c66",
+      "ffmpeg_bundle": {
+        "url": "https://github.com/dfloresc/ffmpeg-macos-builds/releases/download/v9.0.1-1/ffmpeg-9.0.1-1-lgpl-macos-x86_64.tar.xz",
+        "sha256": "d63ad731cbf1eb71c2055130fedfbd7e49edd60a9815ab763e72ba802c1ac666",
+        "directory": "ffmpeg-9.0.1-1-lgpl-macos-x86_64",
+        "source": "https://github.com/dfloresc/ffmpeg-macos-builds/releases/tag/v9.0.1-1"
+      }
+    },
+    "win32-x64": {
+      "uv_target": "x86_64-pc-windows-msvc",
+      "uv_sha256": "a38b8d1902b7cfbc76b423ba1bb456f623f42064cdc72628b6075b89afd1019a",
+      "ffmpeg_sha256": "8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d77",
+      "ffmpeg_binary_sha256": "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00",
+      "ffprobe_sha256": "f309e6223ad89d2fe54bccd420a7709b66fd27540674e92309578ed491a43c8d",
+      "ffprobe_binary_sha256": "3a7e2dc003dc2cd1472827e4c7c4f056ae1ae0ae7c5bbc580c99b49827351ba4",
+      "license_sha256": "d751d40ef8ba97bf46964ae203bf88e7c0027b5459946ac758403c1bb032523f",
+      "license_binary_sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "readme_sha256": "9910569b1b42c01b91dd03b85abc8472a15b5aa31188e41e9654ae08cc179d07",
+      "readme_binary_sha256": "a636a7183c58006351acbaf35303c0ed85c6e1320fd4e80de453ba6157de6311"
+    }
+  }
+}
