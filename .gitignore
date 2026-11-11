@@ -3,6 +3,8 @@
 ._*
 .idea/
 .vscode/
+.playwright-mcp/
+.runtime/
 *.swp
 *.swo
 
@@ -53,3 +55,6 @@ logs/
 *.ckpt
 *.onnx
 *.safetensors
+
+# The pinned, MIT-licensed inference model is intentionally distributed.
+!src/ai_song_detection/assets/ai_music_detector.onnx

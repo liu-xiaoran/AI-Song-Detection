@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/lofcz/ai-music-detector",
+  "commit": "6ba389e94a179ac90f3eb134b741ef37baa30434",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Matěj Štágl",
+  "model_path": "src/models/ai_music_detector.onnx",
+  "model_sha256": "af7a75c6ed457bc5b6941c8bc76aa06a66d48de40db944b761ed2bebfc0fbbd3",
+  "feature_reference": "src/python/inference.py",
+  "resampling_reference": "src/cs/AiMusicDetector/SincResampler.cs",
+  "adaptation": "CPU NumPy/SciPy fakeprint extraction and sinc-Hann resampling; bounded decoding; input validation; score interpretation and uncertainty policy.",
+  "upstream_reported_accuracy": 0.9988245830068286,
+  "upstream_reported_test_samples": 17866,
+  "independent_accuracy_validation": false
+}

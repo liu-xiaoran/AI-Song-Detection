@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Local API reference and request console for AI Song Detection.">
+    <meta name="color-scheme" content="light">
+    <title>API Reference · AI Song Detection</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/api-docs.css">
+    <script src="/static/api-docs.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header page-width">
+      <a class="brand" href="/" aria-label="AI Song Detection home"><span class="brand-icon" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>AI Song Detection</span></a>
+      <nav class="docs-nav" aria-label="Documentation navigation"><a href="/">Open detector</a><a href="/openapi.json">OpenAPI JSON</a></nav>
+    </header>
+    <main class="page-width docs-main">
+      <div class="docs-intro"><p class="eyebrow">LOCAL API REFERENCE</p><h1>Build on the detector.</h1><p>Analyze an audio file or check the service from your own tools. This reference and its request console run without external assets.</p></div>
+      <aside class="docs-notice">This service has no authentication and is intended for local use. The examples address the server you are currently viewing. Only one analysis request can run at a time.</aside>
+
+      <section class="endpoint" aria-labelledby="detect-title">
+        <div class="endpoint-heading"><span class="method post">POST</span><h2 id="detect-title">/api/v1/detect</h2></div>
+        <p>Analyze one audio file. Send <code>multipart/form-data</code> with a single file field named <code>file</code>. Uploaded audio is stored temporarily on this server and deleted after processing.</p>
+        <div class="endpoint-grid">
+          <div class="endpoint-reference">
+            <h3>Input limits</h3>
+            <ul><li>Maximum file size: 100 MB (104,857,600 bytes).</li><li>Minimum audio duration: 10 seconds.</li><li>Only the first 300 seconds are analyzed.</li><li>Supported extensions: MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, AIFF, AIF, WMA. Decoding support depends on the installed audio tools.</li></ul>
+            <h3>Example request</h3>
+            <pre><code>curl -X POST http://127.0.0.1:8000/api/v1/detect \
+  -F "file=@song.mp3"</code></pre>
+            <p class="docs-caption">Replace the example host and port if your service uses a different address. Let your HTTP client set the multipart boundary.</p>
+          </div>
+          <div class="request-console">
+            <h3>Try an upload</h3>
+            <form id="docs-upload-form" aria-busy="false">
+              <label class="docs-file-label" for="docs-audio-file">Audio file</label>
+              <input id="docs-audio-file" name="file" type="file" required accept=".mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aiff,.aif,.wma" aria-describedby="docs-upload-help">
+              <p class="docs-caption" id="docs-upload-help">The selected file will be sent to this server for analysis.</p>
+              <button class="docs-button" id="docs-upload-button" type="submit">Send request</button>
+            </form>
+            <p class="console-status" id="docs-detect-status" role="status" aria-live="polite">No request sent.</p>
+            <pre class="console-output" tabindex="0" aria-label="Detection response JSON"><code id="docs-detect-output">The JSON response will appear here.</code></pre>
+          </div>
+        </div>
+        <h3>Successful response · HTTP 200</h3>
+        <div class="docs-table-wrapper"><table><thead><tr><th scope="col">Field</th><th scope="col">Meaning</th></tr></thead><tbody>
+          <tr><td><code>filename</code></td><td>Sanitized original filename.</td></tr>
+          <tr><td><code>assessment</code></td><td><code>likely_human_created</code> for scores below 0.4; <code>uncertain</code> for 0.4–0.6 inclusive; <code>likely_ai_generated</code> for scores above 0.6. This review band is an application policy, not a validated accuracy guarantee.</td></tr>
+          <tr><td><code>ai_score</code></td><td>A number from 0 to 1. Higher values indicate more of the AI patterns recognized by the model. It is an uncalibrated score, not a verified probability.</td></tr>
+          <tr><td><code>threshold</code></td><td>The upstream binary threshold, 0.5. The assessment also applies the review band described above.</td></tr>
+          <tr><td><code>audio_duration_seconds</code></td><td>Source audio duration reported by the decoder.</td></tr>
+          <tr><td><code>analyzed_duration_seconds</code></td><td>Duration actually analyzed, up to 300 seconds.</td></tr>
+          <tr><td><code>truncated</code></td><td>Whether audio beyond the analysis limit was omitted.</td></tr>
+          <tr><td><code>processing_time_ms</code></td><td>Detector processing time in milliseconds; excludes HTTP upload and queueing.</td></tr>
+          <tr><td><code>model</code></td><td>Model name, version, SHA-256, and pinned upstream commit.</td></tr>
+          <tr><td><code>warnings</code></td><td>Array of caveats relevant to interpreting the result.</td></tr>
+        </tbody></table></div>
+        <p class="docs-caption">The model targets known Suno ≤ 5 and Udio ≤ 1.5 artifacts. Results do not prove authorship or production history, and mixed production or unfamiliar generators are not validated.</p>
+      </section>
+
+      <section class="endpoint" aria-labelledby="health-title">
+        <div class="endpoint-heading"><span class="method get">GET</span><h2 id="health-title">/health</h2></div>
+        <p>Check readiness. HTTP 200 indicates the model and audio tools are available. HTTP 503 indicates degraded readiness. The JSON includes <code>status</code>, <code>version</code>, <code>model_loaded</code>, and <code>ffmpeg_available</code>.</p>
+        <button class="docs-button secondary" id="docs-health-button" type="button">Check health</button>
+        <p class="console-status" id="docs-health-status" role="status" aria-live="polite">No request sent.</p>
+        <pre class="console-output health-output" tabindex="0" aria-label="Health response JSON"><code id="docs-health-output">The JSON response will appear here.</code></pre>
+      </section>
+
+      <section class="endpoint" aria-labelledby="error-title">
+        <h2 id="error-title">Error responses</h2>
+        <p>Errors use <code>{"detail": {"code": "…", "message": "…"}}</code>. Read the code for programmatic handling and the message for a readable explanation.</p>
+        <div class="docs-table-wrapper"><table><thead><tr><th scope="col">HTTP status</th><th scope="col">Typical cause</th></tr></thead><tbody>
+          <tr><td>400 / 422</td><td>Malformed upload, missing file, empty file, invalid audio, short audio, or unusable signal.</td></tr>
+          <tr><td>403</td><td>A browser submitted the request from a different origin.</td></tr>
+          <tr><td>408</td><td>The upload exceeded the server timeout.</td></tr>
+          <tr><td>413</td><td>The uploaded file or request body exceeds its size limit.</td></tr>
+          <tr><td>415</td><td>Unsupported filename extension.</td></tr>
+          <tr><td>429</td><td>Another analysis is active. Retry after it completes.</td></tr>
+          <tr><td>500</td><td>Audio analysis failed on the server.</td></tr>
+        </tbody></table></div>
+      </section>
+    </main>
+    <footer class="page-width site-footer"><span>AI Song Detection</span><a href="/">Return to the detector</a><a href="/openapi.json">Download the OpenAPI schema</a></footer>
+  </body>
+</html>

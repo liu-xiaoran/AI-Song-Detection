@@ -1,0 +1,55 @@
+.docs-nav { display: flex; gap: 20px; font-size: 12px; }
+.docs-nav a, .site-footer a { text-underline-offset: 3px; }
+.docs-main { padding-block: 50px 20px; }
+.docs-intro h1 { font-size: clamp(35px, 4.5vw, 56px); letter-spacing: -2px; }
+.docs-intro > p:last-child { max-width: 690px; color: var(--muted); font-size: 15px; line-height: 1.8; margin-top: 22px; }
+.docs-notice { padding: 15px 18px; margin: 27px 0 35px; border: 1px solid #d7e1ca; border-radius: 7px; font-size: 12px; line-height: 1.7; background: #edf2e5; color: #506144; }
+.endpoint { padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: white; margin-bottom: 24px; min-width: 0; }
+.endpoint-heading { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.endpoint h2 { font-size: 20px; font-weight: 550; letter-spacing: -.4px; margin: 0; }
+.endpoint-heading h2 { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 17px; letter-spacing: -.5px; overflow-wrap: anywhere; }
+.method { font-size: 10px; font-weight: 700; letter-spacing: .5px; padding: 5px 9px; border-radius: 4px; }
+.method.post { color: #496b29; background: #ecf3e3; }
+.method.get { color: #356573; background: #e9f1f3; }
+.endpoint p, .endpoint ul { font-size: 12px; color: #53645a; line-height: 1.8; }
+.endpoint li + li { margin-top: 6px; }
+.endpoint ul { padding-left: 20px; }
+.endpoint h3 { margin: 24px 0 10px; font-size: 13px; font-weight: 600; }
+.endpoint-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-bottom: 28px; }
+.endpoint-reference { min-width: 0; }
+.endpoint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .95em; }
+.endpoint p > code, .endpoint td > code { background: #f0f3ec; border-radius: 3px; padding: 2px 4px; overflow-wrap: anywhere; }
+.endpoint pre { padding: 14px; background: #f5f7f1; border: 1px solid #e3e8dd; border-radius: 6px; font-size: 11px; line-height: 1.8; overflow: auto; }
+.endpoint .docs-caption { color: var(--muted); font-size: 10px; line-height: 1.7; }
+.request-console { padding: 0 18px 18px; border-radius: 8px; background: #f5f7f1; min-width: 0; }
+.docs-file-label { display: block; margin-bottom: 7px; font-size: 11px; font-weight: 550; }
+#docs-audio-file { display: block; width: 100%; font-size: 11px; color: #53645a; border: 1px solid #d6dfcd; border-radius: 5px; padding: 8px; background: white; }
+#docs-audio-file::file-selector-button { border: 1px solid #d6dfcd; background: #edf2e5; color: var(--ink); padding: 5px 8px; margin-right: 10px; border-radius: 3px; cursor: pointer; font: inherit; }
+.docs-button { background: var(--ink); color: white; font-size: 11px; font-weight: 550; padding: 10px 15px; border: 1px solid var(--ink); border-radius: 5px; }
+.docs-button:hover:enabled { background: #2e4d3e; }
+.docs-button:disabled { opacity: .6; }
+.docs-button.secondary { margin-top: 7px; }
+.endpoint .console-status { margin-bottom: 7px; font-size: 10px; }
+.console-status[data-error="true"] { color: #924328; }
+.endpoint .console-output { min-height: 100px; max-height: 440px; background: #fff; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.endpoint .health-output { max-width: 590px; background: #f5f7f1; }
+.docs-table-wrapper { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+.endpoint table { border-collapse: collapse; width: 100%; text-align: left; font-size: 11px; }
+.endpoint th { padding: 10px 13px; font-weight: 600; background: #f5f7f1; }
+.endpoint td { padding: 11px 13px; border-top: 1px solid var(--line); vertical-align: top; color: #53645a; line-height: 1.75; }
+.endpoint td:first-child { width: 190px; }
+@media (max-width: 760px) {
+  .docs-nav { gap: 9px; font-size: 10px; }
+  .docs-main { padding-top: 34px; }
+  .docs-intro h1 { letter-spacing: -1.3px; }
+  .docs-intro > p:last-child { font-size: 13px; }
+  .endpoint { padding: 20px; }
+  .endpoint-grid { grid-template-columns: 1fr; gap: 18px; }
+  .endpoint td:first-child { width: 125px; }
+  .endpoint td, .endpoint th { padding: 10px; }
+}
+@media (max-width: 390px) {
+  .docs-nav { flex-direction: column; gap: 3px; text-align: right; }
+  .endpoint { padding: 16px; }
+  .endpoint td:first-child { width: 110px; }
+}

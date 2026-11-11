@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Screen music for AI-generated audio with a local, CPU-based detector.">
+    <meta name="color-scheme" content="light">
+    <title>AI Song Detection</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header page-width">
+      <a class="brand" href="/" aria-label="AI Song Detection home">
+        <span class="brand-icon" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span>AI Song Detection</span>
+      </a>
+      <span class="service-status" id="service-status" role="status"><span class="status-dot"></span><span id="service-label">Checking detector</span></span>
+    </header>
+
+    <main class="page-width">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">LISTEN BEYOND THE SOUND</p>
+        <h1 id="page-title">Is there AI in<br>this song?</h1>
+        <p class="intro-copy">A quick first look at the signals behind the music.<br class="desktop-break"> Upload a track and screen for AI-generated audio.</p>
+        <div class="intro-tags" aria-label="Service features"><span>Local processing</span><span>CPU inference</span><span>No per-song API fee</span></div>
+      </section>
+
+      <div class="workspace">
+        <section class="upload-panel panel" aria-labelledby="upload-title">
+          <div class="panel-heading"><span class="step-number">01</span><h2 id="upload-title">Choose your track</h2></div>
+          <form id="upload-form">
+            <div class="drop-zone" id="drop-zone">
+              <input class="file-input" id="audio-file" name="file" type="file" accept=".mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aiff,.aif,.wma" aria-describedby="file-help">
+              <label class="drop-label" for="audio-file">
+                <span class="upload-icon" aria-hidden="true">
+                  <svg viewBox="0 0 32 32" fill="none"><path d="M16 21V6m0 0-6 6m6-6 6 6M6 21v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+                <span class="drop-title">Drop a song here</span>
+                <span class="drop-subtitle">or <span class="browse-link">browse files</span></span>
+              </label>
+            </div>
+            <p class="file-help" id="file-help">MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, AIFF, WMA<br>Up to 100 MB · At least 10 seconds</p>
+            <div class="selected-file" id="selected-file" hidden>
+              <span class="file-symbol" aria-hidden="true">♪</span>
+              <div class="file-details"><span id="file-name"></span><span id="file-size"></span></div>
+              <button class="remove-file" id="remove-file" type="button" aria-label="Remove selected file">×</button>
+            </div>
+            <button class="analyze-button" id="analyze-button" type="submit" disabled><span id="button-label">Analyze track</span><span aria-hidden="true" id="button-arrow">↗</span><span class="spinner" id="button-spinner" hidden aria-hidden="true"></span></button>
+            <p class="process-status" id="process-status" role="status" aria-live="polite"></p>
+            <div class="error-message" id="error-message" role="alert" hidden></div>
+          </form>
+          <p class="privacy-note"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5" stroke="currentColor"/><path d="M5.5 7V4.5a2.5 2.5 0 0 1 5 0V7" stroke="currentColor" stroke-linecap="round"/></svg>Audio stays on this server and is deleted after analysis.</p>
+        </section>
+
+        <section class="result-panel panel" aria-labelledby="result-title" aria-busy="false" id="result-panel">
+          <div class="panel-heading"><span class="step-number">02</span><h2 id="result-title">Read the signals</h2></div>
+          <div class="empty-result" id="empty-result">
+            <div class="waveform" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <h3 id="empty-title">Every track has a signature.</h3>
+            <p id="empty-description">Your result will appear here once<br>the audio has been analyzed.</p>
+          </div>
+          <div class="detection-result" id="detection-result" hidden>
+            <p class="result-file" id="result-file"></p>
+            <p class="assessment-label" id="assessment-label" tabindex="-1"></p>
+            <p class="assessment-description" id="assessment-description"></p>
+            <div class="score-heading"><span>AI detection score</span><strong id="score-value"></strong></div>
+            <div class="score-track" id="score-meter" role="meter" aria-label="AI detection score" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><span class="score-fill" id="score-fill"></span></div>
+            <div class="score-scale"><span>Human-like signal</span><span>AI-like signal</span></div>
+            <p class="score-explanation">An uncalibrated model score, not the probability that a song was made with AI.</p>
+            <dl class="result-metrics"><div><dt>Audio analyzed</dt><dd id="analyzed-duration"></dd></div><div><dt>Processing time</dt><dd id="processing-time"></dd></div></dl>
+            <ul class="result-warnings" id="result-warnings" hidden></ul>
+            <p class="result-caution">Use this result as a screening signal. It is not proof of how a song was made.</p>
+          </div>
+        </section>
+      </div>
+
+      <section class="context-grid" aria-label="About the analysis">
+        <article><span class="context-index">A / THE METHOD</span><h2>Patterns, not guesswork.</h2><p>The detector looks for frequency artifacts that audio generators can leave behind. It analyzes the first 300 seconds of a track.</p></article>
+        <article><span class="context-index">B / THE COVERAGE</span><h2>Know its range.</h2><p>The upstream model targets Suno ≤ 5 and Udio ≤ 1.5. New generators, mixed production, and modified audio can affect results.</p></article>
+        <article><span class="context-index">C / THE EVIDENCE</span><h2>Keep the numbers in context.</h2><p>The upstream project reports 99.88% accuracy on its own held-out test set. We have not independently verified that result.</p></article>
+      </section>
+    </main>
+
+    <footer class="page-width site-footer"><span>AI Song Detection</span><a href="/docs">API reference</a><span>Built on the MIT-licensed ai-music-detector by Matěj Štágl.</span></footer>
+  </body>
+</html>
