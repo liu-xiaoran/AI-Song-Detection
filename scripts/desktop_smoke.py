@@ -803,6 +803,13 @@ def verify(source: Path, work: Path, report: Path, browser: bool, evidence: dict
             elif not result_file and not (restored_root / "current.json").exists():
                 break
             time.sleep(0.25)
+        if result_file:
+            helper_log = result_file.with_name("helper.log")
+            if helper_log.is_file():
+                shutil.copy2(helper_log, report / "uninstall-helper.log")
+            evidence["scoped_uninstall"]["helper_directory_files"] = sorted(
+                path.name for path in result_file.parent.iterdir()
+            )
         evidence["scoped_uninstall"]["helper_result"] = helper_result
         evidence["scoped_uninstall"]["remaining_top_level"] = (
             sorted(path.name for path in restored_root.iterdir()) if restored_root.exists() else []
