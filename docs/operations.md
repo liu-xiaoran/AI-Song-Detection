@@ -14,7 +14,7 @@ Extract the complete project archive, then double-click `Install.command` on mac
 
 The installer creates an independent application copy in `releases/<source-hash>/`, with its own virtual environment. `current.json` records the selected release, Python, and decoder paths; the command wrapper uses those installed paths. The extracted source folder is not needed afterward. Runtime downloads and cached packages remain under the application root. No global PATH or system Python is changed. See [installer dependency provenance](../install/README.md) for pinned versions, checksums, and component notices.
 
-Installation opens the app by default. Pass `--no-launch` to the installation entry to skip that step. For an isolated installation, set `AI_SONG_DETECTION_INSTALL_DIR` and `AI_SONG_DETECTION_DESKTOP_DIR` before running the entry; these overrides apply to the bootstrap and the application installer together. Failed setup can be retried. Candidate checks run before switching releases; older release directories are retained. There is no separate automatic-update or uninstall command.
+Installation opens the app by default. Pass `--no-launch` to the installation entry to skip that step. For an isolated installation, set `AI_SONG_DETECTION_INSTALL_DIR` and `AI_SONG_DETECTION_DESKTOP_DIR` before running the entry; these overrides apply to the bootstrap and the application installer together. Failed setup can be retried. Candidate checks run before switching releases; older release directories are retained. The explicit `update` command checks a candidate before switching; updates are never automatic. Cleanup and uninstall commands preview their scope before `--apply`.
 
 Double-click the start entry to launch or reopen the app in the default browser. The service runs in the background. A healthy existing instance is reused; an occupied preferred port leads to another available local port. The launcher waits for model and decoder readiness before opening the browser. Failure messages identify the service log rather than opening an unusable page.
 
@@ -50,7 +50,7 @@ uv run ai-song-detection stop --json
 uv run ai-song-detection detect song.mp3 another-song.wav --json
 ```
 
-`launch` prefers port 8000 but prints the actual selected address. `status` reports a running, identity-verified managed instance, its address, version, PID, and log path. The default startup timeout is 45 seconds. `stop` requests graceful shutdown and waits up to 90 seconds by default; it does not terminate another application based on an old PID file. JSON output never contains the private control token.
+`launch` prefers port 8000 but prints the actual selected address. Add `--strict-port` to require exactly the requested port; this also rejects reusing an instance on a different port. `status --url` prints only a ready managed URL and otherwise exits 1. `status` reports a running, identity-verified managed instance, its address, version, PID, and log path. The default startup timeout is 45 seconds. `stop` requests graceful shutdown and waits up to 90 seconds by default; it does not terminate another application based on an old PID file. JSON output never contains the private control token.
 
 Private instance state is protected by a per-user file lock. The service identity includes application, instance, and version fields. Start and stop operations use localhost directly, independently of HTTP proxy environment settings. Browser-originated stop requests are denied; the command uses a private instance token.
 
@@ -64,9 +64,54 @@ For Docker, run `docker compose up --build`; Compose binds the host port to `127
 
 The model is bundled and checksum-verified at startup. An invalid or missing model prevents startup. CPU inference uses one ONNX Runtime thread and needs no external detection service. Package installation and image builds need network access; inference does not.
 
+## Batch detection and reports
+
+```bash
+ai-song-detection detect ./songs another.flac --recursive --start 30 --duration 60 --output reports.csv
+ai-song-detection detect ./songs --output reports.json --retries 1 --json
+```
+
+Directory scans include supported extensions; subdirectories require `--recursive`. Explicit file inputs still go through decoder validation. Resolved paths are deduplicated. `--retries` accepts 0–3 retries of transient runtime/file errors; invalid content, missing files, and permission failures are not retried. Processing stays serial. A summary goes to stderr; `--json` keeps one JSON object per input on stdout. Output supports JSON, JSONL, and CSV and is written atomically; an output path cannot overwrite an input. CSV cells that could be spreadsheet formulas are neutralized.
+
+The browser keeps a serial multi-file queue and session results in memory, without localStorage or an audio database. Add files during a job, cancel individual items, retry failures, revisit results, and copy/download JSON or CSV. Window settings are captured when each item is added. XHR shows transferred upload bytes; later stages are reported by the server rather than estimated percentages. Cancellation during upload is requested after upload returns a job ID. Running work stays `cancelling` until its worker exits; hashing/decoding check cancellation, owned decoder processes are terminated and reaped, and preprocessing/inference check between bounded operations. There is no immediate mid-ONNX interruption guarantee.
+
+Closing a tab loses its browser history and queued browser files; already accepted server jobs continue. Keep exported reports for durable history. A known job ID can be polled again for up to one hour, subject to the 100-terminal-report limit and service lifetime. Upload timeout after server acceptance can be ambiguous: the browser pauses further uploads until the service is restarted rather than silently submitting a duplicate. Reports never imply whole-song coverage when only a window was analyzed.
+
+## Maintenance and offline installation
+
+Run these through the installed wrapper (or a shell entry created with `shell-setup`):
+
+```bash
+ai-song-detection doctor --json
+ai-song-detection logs --lines 100 --follow
+ai-song-detection diagnostics --output diagnostics.zip
+ai-song-detection update
+ai-song-detection update --source /path/to/extracted/source --no-launch
+ai-song-detection cleanup --keep 2
+ai-song-detection stop
+ai-song-detection cleanup --keep 2 --cache --apply
+ai-song-detection uninstall
+ai-song-detection uninstall --apply
+ai-song-detection shell-setup --directory "$HOME/.local/bin"
+```
+
+`doctor` checks the interpreter, model checksum/load, FFmpeg/ffprobe executables, installation boundaries, and managed status. A stopped service is an available status, not itself a missing dependency. `logs` reads the service log; Ctrl+C ends follow mode. Diagnostics include health facts with private directory prefixes removed, and omit raw logs, environment variables, audio, reports, and private control state. Review the ZIP before sharing.
+
+`update` reads the main-branch commit of this project's own GitHub repository, then downloads that exact SHA over HTTPS. It uses the same locked installer, candidate checks, rollback behavior, and component checksum checks. This is a commit-pinned source update, not a signed release channel. A local `--source` supports a reviewed source tree. Changed bootstrap versions may require downloading the source and running Install again.
+
+`cleanup` lists paths and reclaimable bytes. Current, executing, and identified active releases are protected. An unidentified or legacy active service conservatively protects all releases. `--cache` also removes downloaded archives and package caches, which can prevent future offline reinstalls until a new bundle is prepared. `uninstall --apply` first requests authenticated shutdown, removes owned application directories and unchanged registered shortcuts, and preserves unknown top-level files. Windows runtime deletion is deferred until the CLI exits and reports a result-file path. These operations never kill a process merely because its PID was saved in old state.
+
+To prepare an offline installer on an already installed machine:
+
+```bash
+ai-song-detection bundle --output /path/to/Offline-Installer
+```
+
+Copy the entire output folder to another computer with the same OS and CPU architecture. Open `Restore.command` on Mac or `Restore.cmd` on Windows. The destination must be a new or empty per-user installation directory; existing installations are left untouched. `--install-dir`, `--desktop-dir`, and `--no-launch` support controlled restores. The folder includes private Python/uv, verified decoder assets, locked dependency caches and the model/source, and excludes service state, audio, reports, old releases and virtual environments. Restore verifies the file manifest and rebuilds the environment at its final path, with uv offline and dependency downloads disabled. Do not remove caches before creating it. Component checksums detect corruption; they are not publisher signatures. Bundles are generated per platform from an installation, not universal signed binaries.
+
 ## HTTP contract
 
-`POST /api/v1/detect` accepts `multipart/form-data` with exactly one binary field named `file`. No additional fields are accepted.
+`POST /api/v1/detect` accepts `multipart/form-data` with exactly one binary field named `file`. No additional form fields are accepted. Optional query parameters are `start_seconds` (finite, non-negative; default 0) and `duration_seconds` (10–300; default 300). Invalid query parameters return the framework validation response with HTTP 422.
 
 ```bash
 curl -F 'file=@song.mp3' http://127.0.0.1:8000/api/v1/detect
@@ -79,29 +124,44 @@ Successful requests return HTTP 200 with these fields:
 | `filename` | Sanitized display filename; never a server path. |
 | `assessment` | `likely_ai_generated`, `likely_human_created`, or `uncertain`. |
 | `ai_score` | Float in [0, 1]; uncalibrated model output. |
-| `threshold` | Upstream binary reference threshold, 0.5; the application uses the uncertainty band described below. |
+| `threshold` | Deprecated legacy binary reference, 0.5. Do not use it to reproduce the application assessment. |
+| `upstream_binary_threshold` | Explicit upstream binary reference, 0.5. |
+| `decision_policy` | Canonical assessment policy: ID, version, `human_below: 0.4`, `ai_above: 0.6`, inclusive uncertainty interval, and `validated: false`. |
+| `report_id`, `analyzed_at`, `application_version` | Unique report ID, UTC analysis timestamp, and software version. |
+| `input_sha256`, `input_size_bytes` | Full input content fingerprint and bytes, including audio outside the analyzed window. |
+| `analyzed_start_seconds`, `analyzed_end_seconds`, `requested_duration_seconds` | Selected start, actual end, and requested window duration. |
 | `audio_duration_seconds` | Reported or decoded duration; a decoder estimate may be used when exact duration is unavailable. |
 | `analyzed_duration_seconds` | Duration actually analyzed, capped at 300 seconds. |
-| `truncated` | Whether only the beginning of a longer file was analyzed. |
-| `processing_time_ms` | Decode, preprocess, and inference elapsed time; excludes HTTP upload and response transfer. |
+| `truncated` | Whether any original audio was omitted, before or after the selected interval. |
+| `processing_time_ms` | Hash, decode, preprocess, and inference elapsed time; excludes HTTP upload and response transfer. |
 | `model` | `name`, `version`, `sha256`, and `upstream_commit`. |
 | `warnings` | Score interpretation, coverage, and validation limitations. |
 
 Scores below 0.4 produce `likely_human_created`; scores above 0.6 produce `likely_ai_generated`; both endpoints and the values between them produce `uncertain`. This policy has not been independently validated.
 
-`GET /health` returns `app_id`, `instance_id`, `pid`, `status`, application `version`, `model_loaded`, and `ffmpeg_available`, with a no-store cache header. `app_id` is `ai-song-detection`; an unmanaged foreground service has an empty instance ID. HTTP 200 means model and both FFmpeg executables are available; HTTP 503 reports `degraded` if a required capability is missing. Availability checks do not prove that every codec works. `GET /docs` provides interactive documentation and `GET /openapi.json` exposes the schema.
+For queueing and cancellation use:
 
-The main page polls readiness every five seconds while visible, and checks again before submitting audio. Connection loss disables analysis and presents `Retry connection`; the selected track remains available after reconnecting. A request failure does not leave a previous result displayed as the new result.
+```bash
+curl -F 'file=@song.mp3' 'http://127.0.0.1:8000/api/v1/jobs?start_seconds=30&duration_seconds=60'
+curl http://127.0.0.1:8000/api/v1/jobs/JOB_ID
+curl -X POST http://127.0.0.1:8000/api/v1/jobs/JOB_ID/cancel
+```
+
+Upload returns 202 with `id`, `status`, `stage`, `created_at`, `updated_at`, `result`, and `error`. Polling and cancel return the same structure with no-store headers. Status is `queued`, `running`, `cancelling`, `completed`, `failed`, or `cancelled`. Stages are `queued`, `hashing`, `decoding`, `preprocessing`, `inference`, and `complete`; stage is not a percentage. Completed jobs contain the result contract above; failures contain `error: {code,message}`. Cancellation is idempotent; only terminal `cancelled` confirms the worker has ended. Unknown/expired IDs return 404 `job_not_found`. Reports are memory-only, retained for one hour and at most 100 terminal jobs; restart loses them. Audio is removed when a job ends. A temporary-file cleanup failure is reported as `cleanup_failed`; admission pauses while cleanup is retried, rather than losing the worker or accumulating more uploads.
+
+`GET /health` returns `app_id`, `instance_id`, `pid`, `status`, application `version`, `model_loaded`, and `ffmpeg_available`, with a no-store cache header. `app_id` is `ai-song-detection`; every service startup has a fresh instance ID, including foreground operation; this lets clients distinguish a restart after an ambiguous network failure. HTTP 200 means model and both FFmpeg executables are available; HTTP 503 reports `degraded` if a required capability is missing. Availability checks do not prove that every codec works. `GET /docs` provides interactive documentation and `GET /openapi.json` exposes the schema.
+
+The main page polls readiness every five seconds while visible, and checks again before submitting audio. Connection loss disables analysis and presents `Retry connection`; selected files remain available after reconnecting. A request failure does not leave a previous result displayed as the new result.
 
 ## Input and resource limits
 
 - HTTP file size: 100 MiB (104,857,600 bytes). Total request-body allowance includes another 1 MiB for multipart overhead.
-- One upload or analysis per server process, including multipart parsing. An additional request receives HTTP 429 rather than joining a queue.
-- Minimum audio: 10 seconds. Analysis covers the first 300 seconds.
+- One analysis per process. The jobs API admits up to nine uploading/waiting/running jobs and returns 429 `queue_full` at capacity; the legacy synchronous API returns 429 `busy` while other work is admitted.
+- Minimum selected audio: 10 seconds. Default coverage is the first 300 seconds; choose a start and 10–300-second duration.
 - Native sample rate: 16,000–96,000 Hz; mono or stereo only. Resampling to 16 kHz occurs before feature extraction.
 - HTTP extensions: `.mp3`, `.wav`, `.flac`, `.m4a`, `.aac`, `.ogg`, `.opus`, `.aiff`, `.aif`, `.wma`. Decoding must also succeed.
 - FFprobe timeout: 10 seconds. FFmpeg decode timeout: 60 seconds, with bounded output and at most 301 seconds decoded.
-- Upload parsing and upload copying each have a 120-second limit. Inference is outside those upload timeouts.
+- Upload parsing and copying share a 120-second limit. Inference is outside those upload timeouts.
 
 The CLI does not impose the HTTP file-size or filename-extension check. Audio validation and bounded decoding still apply. Do not increase worker count as a substitute for a shared admission-control design; the concurrency guard is per process.
 
@@ -129,13 +189,13 @@ CLI JSON errors contain `filename`, `error`, and `code`. Any failed input produc
 
 ## Storage, access, and deployment boundaries
 
-The application does not send audio to an external API, retain a results database, or train on uploads. Multipart processing may spool to temporary storage. Request-scoped uploads and decoder temporary files are closed and removed after processing, including handled errors. A process crash or forced termination may leave temporary files for the operating system or operator to clean up. This is cleanup behavior, not a secure-erasure guarantee.
+The application does not send audio to an external API, retain a results database, or train on uploads. Multipart processing may spool to temporary storage. Request/job-scoped uploads and decoder temporary files are closed and removed after processing, including handled errors. A process crash or forced termination may leave temporary files for the operating system or operator to clean up. This is cleanup behavior, not a secure-erasure guarantee.
 
 There is no authentication. Localhost is the default intended scope. Cross-origin browser POSTs are rejected, but this is not an authentication mechanism. Binding with `--host 0.0.0.0` exposes the unauthenticated service to reachable machines; it does not configure TLS, firewall rules, access controls, or prove LAN reachability.
 
 Before a shared or public deployment, provide authenticated access, TLS, request-size and timeout limits, abuse controls, and an explicit retention policy. Configure a reverse proxy to preserve the effective host and scheme consistently with the browser origin check. Proxy buffering, access logs, infrastructure logs, backups, and temporary storage can have their own retention behavior. The application logs unexpected analysis failures; review operator logging and filesystem access before handling private recordings.
 
-Compose uses a non-root user, a read-only root filesystem, 512 MiB of temporary filesystem space, a 2 GiB memory limit, and two CPUs. These defaults are a local operating baseline, not a validated production capacity claim. This repository does not deploy or expose a public service automatically.
+Compose uses a non-root user, a read-only root filesystem, 1536 MiB of temporary filesystem space, a 2 GiB memory limit, and two CPUs. These defaults are a local operating baseline, not a validated production capacity claim. This repository does not deploy or expose a public service automatically.
 
 ## Development checks
 

@@ -6,15 +6,15 @@ Provide fast, affordable, local screening for AI-generated songs. The applicatio
 
 ## Desktop workflow
 
-macOS Apple Silicon/Intel and Windows x64 have user-level installation entry points. The first installation prepares a private runtime, decoder, dependencies, and independent application copy, then creates desktop start and stop entries. Installation needs network access; daily launch and inference use the installed files offline.
+macOS Apple Silicon/Intel and Windows x64 have user-level installation entry points. The first installation prepares a private runtime, decoder, dependencies, and independent application copy, then creates desktop start and stop entries. Source installation needs network access; a platform-specific offline bundle can restore a prepared runtime without downloads. Daily launch and inference use the installed files offline.
 
 The same launcher backs desktop entries and the `launch`, `status`, and `stop` commands. It prevents duplicate managed instances, identifies its own service before reusing it, chooses a free local port when the preferred port is occupied, and opens the default browser after readiness. The foreground `serve` command remains available for development and manually managed operation.
 
-The main interface stays focused on choosing a song and reading its result. It checks connection readiness periodically, disables analysis while disconnected or busy, and offers `Retry connection` while preserving the selected file. Closing a browser tab leaves the service running; a stop entry or command requests graceful shutdown.
+The main interface provides a serial multi-song queue, stage/cancellation controls, selected-window settings, session report history, and JSON/CSV exports. It checks connection readiness periodically, pauses new submissions while disconnected, and offers `Retry connection` while preserving the selected file. Closing a browser tab leaves the service running; a stop entry or command requests graceful shutdown.
 
 The script installers do not modify global PATH or disable system security protections. Unsigned-download warnings and enterprise restrictions may still apply. An installer entry point and source tests do not by themselves prove successful installation on every supported platform; see [Verification](verification.md).
 
-The detector analyzes spectral fakeprint features in the first 300 seconds of a recording. It targets known Suno ≤ 5 and Udio ≤ 1.5 artifacts. It does not validate every AI generator, identify a generator, locate generated passages, or determine authorship or copyright ownership.
+The detector analyzes spectral fakeprint features in a selected 10–300-second window (default: the first 300 seconds) of a recording. It targets known Suno ≤ 5 and Udio ≤ 1.5 artifacts. It does not validate every AI generator, identify a generator, locate generated passages, or determine authorship or copyright ownership.
 
 ## Inputs
 
@@ -30,7 +30,7 @@ Invalid, unsupported, silent, and insufficient-evidence inputs produce explicit 
 | `likely_human_created` | AI score < 0.4. |
 | `uncertain` | 0.4 ≤ AI score ≤ 0.6. |
 
-The score is the model's sigmoid output, not a calibrated probability of correctness. The uncertainty band is an unvalidated product policy. The result includes a filename, score, assessment, original and analyzed duration, truncation flag, processing time, model version and provenance, and warnings. See [Operations](operations.md) for the exact contract.
+The score is the model's sigmoid output, not a calibrated probability of correctness. The uncertainty band is an unvalidated product policy. The result includes input SHA-256 and byte count, report ID and UTC time, application/model/policy versions, filename, score, assessment, exact selected interval, original and analyzed duration, omission flag, processing time, and warnings. See [Operations](operations.md) for the exact contract.
 
 ## Reference labels for evaluation
 
@@ -49,4 +49,4 @@ Upstream reports 99.88% on its own held-out set. This project's 99% accuracy obj
 
 ## Data handling and deployment scope
 
-Inference runs on the application host. Uploaded audio is held in temporary storage and removed when request handling finishes; there is no results database or training pipeline. The server has no authentication and defaults to localhost. Public or shared deployment requires a separate access, transport, resource, and retention design; see [Operations](operations.md).
+Inference runs on the application host. Uploaded audio is held in temporary storage and removed when request or queued work finishes; there is no results database or training pipeline. The server has no authentication and defaults to localhost. Public or shared deployment requires a separate access, transport, resource, and retention design; see [Operations](operations.md).

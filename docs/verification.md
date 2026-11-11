@@ -1,3 +1,15 @@
+# Version 0.3.0 verification
+
+Date: 2026-11-11. Local platform: macOS ARM64, Python 3.12, CPU inference.
+
+The current functional suite covers bounded FIFO jobs and actual cancellation lifetime, upload validation and cleanup, window selection, content/report provenance, batch CLI exports, labeled-manifest evaluation math, strict-port behavior, maintenance ownership boundaries, and offline-bundle integrity/relocation contracts. Browser behavior tests cover serial queues, upload progress, cancellation, accepted-job polling recovery, failure retry, history, and JSON/CSV exports. These use synthetic audio and simulated failure cases; they do not measure real-song detection accuracy.
+
+A real local browser run verified two valid synthetic-audio jobs and one corrupt-audio failure, retained history, a selected 1–11-second interval, JSON/CSV downloads, 1440px/390px layouts without horizontal overflow, no JavaScript errors, and no external browser resource requests. Full native installation and relocated offline-restore evidence is recorded below after completion.
+
+The previous release verification is retained as historical evidence and does not by itself verify version 0.3.0.
+
+---
+
 # Verification Record
 
 Application version: 0.2.0. Date: 2026-11-11. Local platform: macOS ARM64, Python 3.12, CPU inference.

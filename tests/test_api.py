@@ -16,7 +16,7 @@ class RecordingDetector:
     def __init__(self):
         self.paths = []
 
-    def analyze(self, path, filename=None):
+    def analyze(self, path, filename=None, **kwargs):
         self.paths.append(Path(path))
         assert path.exists()
         return {
@@ -24,6 +24,23 @@ class RecordingDetector:
             "assessment": "uncertain",
             "ai_score": 0.5,
             "threshold": 0.5,
+            "upstream_binary_threshold": 0.5,
+            "decision_policy": {
+                "id": "fakeprint-screening-v1",
+                "version": 1,
+                "human_below": 0.4,
+                "ai_above": 0.6,
+                "uncertain_inclusive": [0.4, 0.6],
+                "validated": False,
+            },
+            "input_sha256": "test",
+            "input_size_bytes": 4,
+            "application_version": "test",
+            "analyzed_at": "test",
+            "report_id": "test",
+            "analyzed_start_seconds": 0,
+            "analyzed_end_seconds": 12,
+            "requested_duration_seconds": 300,
             "audio_duration_seconds": 12,
             "analyzed_duration_seconds": 12,
             "truncated": False,
@@ -174,7 +191,7 @@ def test_multiple_files_and_cross_origin_requests_rejected(client):
 def test_detector_error_cleans_temporary_file(client, monkeypatch):
     api, detector = client
 
-    def bad_audio(path, filename=None):
+    def bad_audio(path, filename=None, **kwargs):
         detector.paths.append(Path(path))
         raise AudioError("Invalid audio", code="invalid_audio")
 
@@ -190,7 +207,7 @@ def test_concurrent_analysis_returns_busy_instead_of_queueing(client, monkeypatc
     _, detector = client
     entered, release = threading.Event(), threading.Event()
 
-    def blocking(path, filename=None):
+    def blocking(path, filename=None, **kwargs):
         entered.set()
         assert release.wait(timeout=5)
         return RecordingDetector().analyze(path, filename=filename)
@@ -215,3 +232,128 @@ def test_concurrent_analysis_returns_busy_instead_of_queueing(client, monkeypatc
 
     asyncio.run(scenario())
     assert not server.app.state.active_request
+
+
+def wait_job(api, identifier, terminal=True):
+    import time
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        response = api.get(f"/api/v1/jobs/{identifier}")
+        assert response.headers["cache-control"] == "no-store"
+        record = response.json()
+        if (record["status"] in {"completed", "failed", "cancelled"}) == terminal:
+            return record
+        time.sleep(0.01)
+    pytest.fail("Job did not reach the requested state")
+
+
+def test_jobs_complete_and_cleanup_inputs(client):
+    api, detector = client
+    response = api.post(
+        "/api/v1/jobs?start_seconds=2&duration_seconds=10", files={"file": ("song.wav", b"test")}
+    )
+    assert response.status_code == 202
+    record = wait_job(api, response.json()["id"])
+    assert record["status"] == "completed"
+    assert record["stage"] == "complete"
+    assert record["result"]["decision_policy"]["validated"] is False
+    assert not detector.paths[0].parent.exists()
+    assert server.app.state.jobs.pending == 0
+    assert api.post(f"/api/v1/jobs/{record['id']}/cancel").json() == record
+
+
+def test_job_error_retained_without_audio(client, monkeypatch):
+    api, detector = client
+
+    def fail_input(path, **kwargs):
+        detector.paths.append(path)
+        raise AudioError("Bad audio", "invalid_audio")
+
+    monkeypatch.setattr(detector, "analyze", fail_input)
+    identifier = api.post("/api/v1/jobs", files={"file": ("bad.wav", b"test")}).json()["id"]
+    record = wait_job(api, identifier)
+    assert record["status"] == "failed"
+    assert record["error"] == {"code": "invalid_audio", "message": "Bad audio"}
+    assert not detector.paths[0].parent.exists()
+
+
+def test_queue_bound_and_real_cancellation(client, monkeypatch):
+    from ai_song_detection import jobs
+    from ai_song_detection.detector import AnalysisCancelled
+
+    api, detector = client
+    entered, release = threading.Event(), threading.Event()
+    paths = []
+
+    def blocked(path, cancel_event, **kwargs):
+        paths.append(path)
+        entered.set()
+        assert release.wait(5)
+        if cancel_event.is_set():
+            raise AnalysisCancelled()
+        return RecordingDetector().analyze(path, filename="song.wav")
+
+    monkeypatch.setattr(detector, "analyze", blocked)
+    monkeypatch.setattr(jobs, "MAX_PENDING_JOBS", 2)
+    upload = {"file": ("song.wav", b"test")}
+    first = api.post("/api/v1/jobs", files=upload).json()["id"]
+    assert entered.wait(3)
+    try:
+        second = api.post("/api/v1/jobs", files=upload).json()["id"]
+        assert api.post("/api/v1/jobs", files=upload).status_code == 429
+        assert api.post("/api/v1/detect", files=upload).status_code == 429
+        assert api.post(f"/api/v1/jobs/{first}/cancel").json()["status"] == "cancelling"
+        assert paths[0].exists()  # Input remains owned until the actual thread exits.
+        assert server.app.state.jobs.pending == 2
+        assert api.post(f"/api/v1/jobs/{second}/cancel").json()["status"] == "cancelled"
+        assert server.app.state.jobs.pending == 1
+    finally:
+        release.set()
+    assert wait_job(api, first)["status"] == "cancelled"
+    assert not paths[0].parent.exists()
+    assert len(paths) == 1  # The queued cancellation never starts inference.
+    assert server.app.state.jobs.pending == 0
+
+
+@pytest.mark.parametrize(
+    "query", ["start_seconds=-1", "duration_seconds=9", "duration_seconds=301", "start_seconds=nan"]
+)
+def test_invalid_window_never_uploads(client, query):
+    api, detector = client
+    for endpoint in ("detect", "jobs"):
+        assert (
+            api.post(
+                f"/api/v1/{endpoint}?{query}", files={"file": ("song.wav", b"test")}
+            ).status_code
+            == 422
+        )
+    assert not detector.paths
+    assert server.app.state.jobs.pending == 0
+
+
+def test_missing_and_expired_jobs(client, monkeypatch):
+    from ai_song_detection import jobs
+
+    api, _ = client
+    assert api.get("/api/v1/jobs/missing").status_code == 404
+    assert api.post("/api/v1/jobs/missing/cancel").status_code == 404
+    identifier = api.post("/api/v1/jobs", files={"file": ("song.wav", b"test")}).json()["id"]
+    wait_job(api, identifier)
+    monkeypatch.setattr(jobs, "REPORT_TTL_SECONDS", -1)
+    assert api.get(f"/api/v1/jobs/{identifier}").status_code == 404
+
+
+def test_foreground_restarts_have_distinct_instances_for_browser_recovery(monkeypatch):
+    monkeypatch.delenv("AI_SONG_DETECTION_INSTANCE_ID", raising=False)
+    monkeypatch.setattr(server, "Detector", RecordingDetector)
+
+    async def scenario():
+        identifiers = []
+        for _ in range(2):
+            foreground = server.FastAPI()
+            async with server.lifespan(foreground):
+                identifiers.append(foreground.state.instance_id)
+        assert all(identifiers) and identifiers[0] != identifiers[1]
+
+    asyncio.run(scenario())

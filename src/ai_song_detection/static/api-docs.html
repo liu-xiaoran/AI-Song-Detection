@@ -26,7 +26,7 @@
         <div class="endpoint-grid">
           <div class="endpoint-reference">
             <h3>Input limits</h3>
-            <ul><li>Maximum file size: 100 MB (104,857,600 bytes).</li><li>Minimum audio duration: 10 seconds.</li><li>Only the first 300 seconds are analyzed.</li><li>Supported extensions: MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, AIFF, AIF, WMA. Decoding support depends on the installed audio tools.</li></ul>
+            <ul><li>Maximum file size: 100 MB (104,857,600 bytes).</li><li>Minimum audio duration: 10 seconds.</li><li>Default: first 300 seconds. Query options: start_seconds ≥ 0 and duration_seconds 10–300.</li><li>Supported extensions: MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, AIFF, AIF, WMA. Decoding support depends on the installed audio tools.</li></ul>
             <h3>Example request</h3>
             <pre><code>curl -X POST http://127.0.0.1:8000/api/v1/detect \
   -F "file=@song.mp3"</code></pre>
@@ -49,7 +49,11 @@
           <tr><td><code>filename</code></td><td>Sanitized original filename.</td></tr>
           <tr><td><code>assessment</code></td><td><code>likely_human_created</code> for scores below 0.4; <code>uncertain</code> for 0.4–0.6 inclusive; <code>likely_ai_generated</code> for scores above 0.6. This review band is an application policy, not a validated accuracy guarantee.</td></tr>
           <tr><td><code>ai_score</code></td><td>A number from 0 to 1. Higher values indicate more of the AI patterns recognized by the model. It is an uncalibrated score, not a verified probability.</td></tr>
-          <tr><td><code>threshold</code></td><td>The upstream binary threshold, 0.5. The assessment also applies the review band described above.</td></tr>
+          <tr><td><code>threshold</code></td><td>Deprecated binary reference 0.5. Use decision_policy to reproduce application assessments.</td></tr>
+          <tr><td><code>decision_policy</code></td><td>Policy ID/version, human_below 0.4, ai_above 0.6, inclusive uncertainty interval, validated false. upstream_binary_threshold separately names the 0.5 upstream reference.</td></tr>
+          <tr><td><code>report_id, analyzed_at, application_version</code></td><td>Unique report, UTC time and software version.</td></tr>
+          <tr><td><code>input_sha256, input_size_bytes</code></td><td>Full input fingerprint and size.</td></tr>
+          <tr><td><code>analyzed_start_seconds, analyzed_end_seconds, requested_duration_seconds</code></td><td>Actual selected interval and requested duration.</td></tr>
           <tr><td><code>audio_duration_seconds</code></td><td>Source audio duration reported by the decoder.</td></tr>
           <tr><td><code>analyzed_duration_seconds</code></td><td>Duration actually analyzed, up to 300 seconds.</td></tr>
           <tr><td><code>truncated</code></td><td>Whether audio beyond the analysis limit was omitted.</td></tr>
@@ -58,6 +62,13 @@
           <tr><td><code>warnings</code></td><td>Array of caveats relevant to interpreting the result.</td></tr>
         </tbody></table></div>
         <p class="docs-caption">The model targets known Suno ≤ 5 and Udio ≤ 1.5 artifacts. Results do not prove authorship or production history, and mixed production or unfamiliar generators are not validated.</p>
+      </section>
+
+      <section class="endpoint" aria-labelledby="jobs-title">
+        <div class="endpoint-heading"><span class="method post">POST</span><h2 id="jobs-title">/api/v1/jobs</h2></div>
+        <p>Queue one multipart file with the same window query options. Returns HTTP 202 with <code>id, status, stage, created_at, updated_at, result, error</code>. One job runs at a time; up to eight others can wait or upload. At capacity the server returns 429.</p>
+        <p>Poll <code>GET /api/v1/jobs/{id}</code>. Cancel with <code>POST /api/v1/jobs/{id}/cancel</code>. Status is queued, running, cancelling, completed, failed or cancelled. Cancelling waits for the worker to end; only cancelled is terminal. Stages name hashing, decoding, preprocessing and inference rather than a guessed percentage.</p>
+        <p>Completed results follow the contract above. Errors use <code>{code, message}</code>. Reports live in memory for one hour and at most 100 terminal jobs; restart clears them. Unknown or expired IDs return 404. Temporary audio is removed when work ends.</p>
       </section>
 
       <section class="endpoint" aria-labelledby="health-title">
@@ -70,7 +81,7 @@
 
       <section class="endpoint" aria-labelledby="error-title">
         <h2 id="error-title">Error responses</h2>
-        <p>Errors use <code>{"detail": {"code": "…", "message": "…"}}</code>. Read the code for programmatic handling and the message for a readable explanation.</p>
+        <p>Application errors use <code>{"detail": {"code": "…", "message": "…"}}</code>; invalid query parameters use the framework HTTP 422 validation list. Read the code for programmatic handling and the message for a readable explanation.</p>
         <div class="docs-table-wrapper"><table><thead><tr><th scope="col">HTTP status</th><th scope="col">Typical cause</th></tr></thead><tbody>
           <tr><td>400 / 422</td><td>Malformed upload, missing file, empty file, invalid audio, short audio, or unusable signal.</td></tr>
           <tr><td>403</td><td>A browser submitted the request from a different origin.</td></tr>

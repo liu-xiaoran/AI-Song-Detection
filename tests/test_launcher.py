@@ -115,6 +115,24 @@ def test_port_occupied_by_foreign_service_is_not_reused(managed_service):
         assert occupied.fileno() != -1
 
 
+def test_strict_port_rejects_occupied_port_without_fallback(managed_service):
+    _, port = managed_service
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", port))
+        occupied.listen()
+        with pytest.raises(launcher.LauncherError, match="No other port"):
+            launcher.launch(port=port, open_browser=False, timeout=5, strict_port=True)
+        assert launcher.status()["status"] == "stopped"
+
+
+def test_strict_port_does_not_reuse_other_port(managed_service):
+    _, port = managed_service
+    running = launcher.launch(port=port, open_browser=False, timeout=5)
+    with pytest.raises(launcher.LauncherError, match="already running on port"):
+        launcher.launch(port=port % 65535 + 1, open_browser=False, strict_port=True)
+    assert launcher.status()["pid"] == running["pid"]
+
+
 def test_repeated_concurrent_launch_uses_one_instance(managed_service):
     _, port = managed_service
     with ThreadPoolExecutor(max_workers=2) as pool:

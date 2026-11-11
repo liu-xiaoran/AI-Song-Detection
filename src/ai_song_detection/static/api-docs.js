@@ -43,7 +43,7 @@ uploadForm.addEventListener("submit", async (event) => {
   uploadButton.textContent = "Sending request…";
   setOutput("detect", "Uploading and analyzing. Keep this page open.", "Waiting for the server response…");
   try {
-    await displayResponse("detect", await fetch("/api/v1/detect", { method: "POST", body }));
+    await displayResponse("detect", await fetch("/api/v1/detect", { method: "POST", body, signal: AbortSignal.timeout(180000) }));
   } catch {
     setOutput("detect", "Connection failed.", "Could not reach the server. Check that it is running and try again.", true);
   } finally {

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import array
 import contextlib
+import hashlib
 import json
 import math
 import os
@@ -434,7 +435,7 @@ def collect_diagnostics(work: Path, report: Path, evidence: dict) -> None:
 
 
 def browser_verify(url: str, song: Path, report: Path) -> dict:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import expect, sync_playwright
 
     errors, requests = [], []
     with sync_playwright() as runtime:
@@ -449,6 +450,8 @@ def browser_verify(url: str, song: Path, report: Path) -> dict:
             page.on("request", lambda request: requests.append(request.url))
             page.goto(url, wait_until="networkidle")
             page.get_by_text("Detector ready", exact=True).wait_for(timeout=15000)
+            page.locator("#start-seconds").fill("1")
+            page.locator("#duration-seconds").fill("10")
             page.locator("#audio-file").set_input_files(str(song))
             page.locator("#analyze-button").click()
             page.locator("#detection-result").wait_for(state="visible", timeout=30000)
@@ -457,6 +460,45 @@ def browser_verify(url: str, song: Path, report: Path) -> dict:
                 in {"Likely AI-generated", "Likely human-created", "Uncertain"},
                 "Missing rendered assessment",
             )
+            expect(page.locator('#history-list [data-status="completed"]')).to_have_count(1)
+            check(
+                "1.0 sec to 11.0 sec" in page.locator("#analyzed-coverage").inner_text(),
+                "Selected interval was not displayed",
+            )
+            page.locator("#audio-file").set_input_files(
+                [str(song), str(song.parent / "corrupt.wav")]
+            )
+            page.locator("#analyze-button").click()
+            expect(page.locator("#history-list li")).to_have_count(3, timeout=30000)
+            check(
+                page.locator('#history-list [data-status="completed"]').count() == 2,
+                "Multi-file queue lost a valid report",
+            )
+            check(
+                page.locator('#history-list [data-status="failed"]').count() == 1,
+                "Multi-file queue did not retain the invalid-audio error",
+            )
+            with page.expect_download() as download:
+                page.locator("#download-all-json").click()
+            export = report / "session.json"
+            download.value.save_as(export)
+            records = json.loads(export.read_text())["reports"]
+            check(
+                len(records) == 3
+                and records[0]["input_sha256"] == hashlib.sha256(song.read_bytes()).hexdigest(),
+                "Downloaded session reports are incomplete",
+            )
+            check(
+                records[0]["analyzed_start_seconds"] == 1
+                and records[0]["analyzed_end_seconds"] == 11,
+                "Downloaded report lost selected interval",
+            )
+            with page.expect_download() as download:
+                page.locator("#download-all-csv").click()
+            download.value.save_as(report / "session.csv")
+            page.locator('#history-list [data-status="completed"]').first.get_by_role(
+                "button", name="View"
+            ).click()
             check(
                 page.evaluate("document.documentElement.scrollWidth <= innerWidth"),
                 "Desktop horizontal overflow",
@@ -479,6 +521,9 @@ def browser_verify(url: str, song: Path, report: Path) -> dict:
                 "desktop_width": 1440,
                 "mobile_width": 390,
                 "real_upload_rendered": True,
+                "serial_queue_valid_and_invalid": True,
+                "selected_window": [1, 11],
+                "json_and_csv_exports": True,
                 "all_resources_local": True,
                 "javascript_errors": errors,
                 "screenshots": ["desktop.png", "mobile.png"],
@@ -636,6 +681,23 @@ def verify(source: Path, work: Path, report: Path, browser: bool, evidence: dict
         detection = cli(wrapper, environment, "detect", str(song))
         check(detection["ai_score"] == result["ai_score"], "CLI and HTTP inference disagree")
         checks["real_model_upload"] = checks["corrupt_audio_rejected"] = checks["cli_detect"] = True
+        doctor = cli(wrapper, environment, "doctor")
+        check(doctor["ok"], "Installed doctor found a broken dependency")
+        discovered = run_native(wrapper, ["status", "--url"], environment).stdout.strip()
+        check(discovered == first["url"], "status --url did not discover the managed service")
+        preview = json.loads(run_native(wrapper, ["cleanup", "--keep", "2"], environment).stdout)
+        check(
+            not preview["applied"] and preview["service_running"],
+            "Cleanup did not preserve the live app",
+        )
+        uninstall_preview = json.loads(run_native(wrapper, ["uninstall"], environment).stdout)
+        check(
+            not uninstall_preview["applied"] and (root / "current.json").exists(),
+            "Uninstall preview changed the installation",
+        )
+        diagnostic = report / "diagnostics.zip"
+        run_native(wrapper, ["diagnostics", "--output", str(diagnostic)], environment)
+        checks["maintenance_doctor_discovery_and_previews"] = True
         if browser:
             evidence["browser"] = browser_verify(first["url"], song, report)
             checks["browser_upload_and_layout"] = True
@@ -663,6 +725,77 @@ def verify(source: Path, work: Path, report: Path, browser: bool, evidence: dict
             "Offline stop failed",
         )
         checks["offline_relaunch_and_inference"] = True
+        portable = work / "Offline export"
+        bundle = json.loads(
+            run_native(
+                wrapper, ["bundle", "--output", str(portable)], environment, timeout=300
+            ).stdout
+        )
+        check(bundle["status"] == "created", "Offline bundle export failed")
+        relocated = work / "Portable installer 中文"
+        portable.replace(relocated)
+        restored_root, restored_desktop = work / "Restored App 中文", work / "Restored Desktop 中文"
+        restore_entry = relocated / ("Restore.cmd" if WINDOWS else "Restore.command")
+        run_native(
+            restore_entry,
+            [
+                "--install-dir",
+                str(restored_root),
+                "--desktop-dir",
+                str(restored_desktop),
+                "--no-launch",
+            ],
+            offline,
+            timeout=600,
+            log=report / "offline-restore.log",
+        )
+        restored_wrapper = (
+            restored_root / "bin" / ("ai-song-detection.cmd" if WINDOWS else "ai-song-detection")
+        )
+        isolated_offline = {
+            key: value for key, value in offline.items() if not key.startswith("AI_SONG_DETECTION_")
+        }
+        restored_doctor = cli(restored_wrapper, isolated_offline, "doctor")
+        check(restored_doctor["ok"], "Restored wrapper did not bind its own installation")
+        restored = cli(restored_wrapper, isolated_offline, "launch", "--no-browser")
+        try:
+            code, restored_result = json_http(restored["url"] + "/api/v1/detect", audio=song)
+            check(
+                code == 200 and restored_result["ai_score"] == result["ai_score"],
+                "Offline relocated inference changed",
+            )
+            if WINDOWS:
+                evidence["restored_windows_cpp_runtime"] = windows_loaded_runtime(
+                    restored["pid"], restored_root
+                )
+        finally:
+            cli(restored_wrapper, isolated_offline, "stop")
+        evidence["offline_bundle"] = {
+            "platform": bundle["platform"],
+            "files": bundle["files"],
+            "size_bytes": bundle["size_bytes"],
+            "relocated_restore": True,
+            "private_runtime_doctor": True,
+            "real_inference": True,
+        }
+        checks["offline_bundle_relocated_restore"] = True
+        # Apply destructive maintenance only to this newly-created test installation.
+        unrelated = restored_root / "unrelated.txt"
+        unrelated.write_text("Preserve this operator file.")
+        removed = json.loads(
+            run_native(restored_wrapper, ["uninstall", "--apply"], isolated_offline).stdout
+        )
+        deadline = time.monotonic() + 50
+        while (restored_root / "current.json").exists() and time.monotonic() < deadline:
+            time.sleep(0.25)
+        check(
+            removed["applied"]
+            and not (restored_root / "current.json").exists()
+            and unrelated.exists(),
+            "Scoped uninstall did not remove only owned installation files",
+        )
+        checks["scoped_uninstall_preserves_unrelated"] = True
+
     finally:
         occupied.close()
         # Stop only this verifier's private, identity-verified instance.

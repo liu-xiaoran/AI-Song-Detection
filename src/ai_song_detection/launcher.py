@@ -303,15 +303,27 @@ def _cleanup_started_process(child: subprocess.Popen, state: dict, *, identified
             child.wait(timeout=5)
 
 
-def launch(port: int = 8000, open_browser: bool = True, timeout: float = 45) -> dict:
+def launch(
+    port: int = 8000,
+    open_browser: bool = True,
+    timeout: float = 45,
+    *,
+    strict_port: bool = False,
+) -> dict:
     """Start/reuse this user's instance and open its page only after readiness."""
     if not isinstance(port, int) or not 1 <= port <= 65535:
         raise LauncherError("The port must be between 1 and 65535.")
     if not math.isfinite(timeout) or timeout <= 0:
         raise LauncherError("The startup timeout must be greater than zero.")
     with _lock(timeout=max(120, timeout + 10)) as directory:
+        if (directory.parent / "uninstall-request.json").exists():
+            raise LauncherError("An uninstall is pending. Wait for its cleanup to finish.")
         state = _read_state(directory)
         if state and (health := _health(state)):
+            if strict_port and state["port"] != port:
+                raise LauncherError(
+                    f"The detector is already running on port {state['port']}. Stop it before requesting strict port {port}."
+                )
             if state["version"] != __version__:
                 raise LauncherError(
                     "A different version is already running. Stop it before launching this version."
@@ -332,8 +344,12 @@ def launch(port: int = 8000, open_browser: bool = True, timeout: float = 45) -> 
             )
         _require_decoder()
         deadline = time.monotonic() + timeout
-        for candidate in _candidate_ports(port):
+        for candidate in (port,) if strict_port else _candidate_ports(port):
             if not _port_available(candidate):
+                if strict_port:
+                    raise LauncherError(
+                        f"Port {port} is already in use. No other port was selected."
+                    )
                 continue
             state = {
                 "instance_id": secrets.token_hex(16),
@@ -342,6 +358,7 @@ def launch(port: int = 8000, open_browser: bool = True, timeout: float = 45) -> 
                 "url": f"http://127.0.0.1:{candidate}",
                 "version": __version__,
                 "created": time.time(),
+                "source_directory": str(Path(__file__).resolve().parents[2]),
             }
             environment = os.environ.copy()
             environment.update(
@@ -416,7 +433,9 @@ def launch(port: int = 8000, open_browser: bool = True, timeout: float = 45) -> 
                 raise
             (directory / "instance.json").unlink(missing_ok=True)
         raise LauncherError(
-            "No available local port was found. Close a detector instance and retry."
+            f"Port {port} could not be bound. No other port was selected."
+            if strict_port
+            else "No available local port was found. Close a detector instance and retry."
         )
 
 

@@ -21,7 +21,7 @@ This project has not independently reproduced those results. The **99% song-leve
 
 ## Protocol
 
-1. Record the application revision, bundled model checksum, preprocessing, and first-300-second coverage policy.
+1. Record the application revision, bundled model checksum, preprocessing, and exact selected-window coverage policy (default first 300 seconds).
 2. Select any revised thresholds or abstention policy using validation data only.
 3. Freeze all settings before running the held-out test.
 4. Evaluate at song level and retain failures, unsupported inputs, and uncertain outcomes in the report.
@@ -47,10 +47,29 @@ Validate calibration before presenting the AI score as a probability. Choose sam
 | Cost | Currency, pricing date, compute rates, utilization, and measured cost per song. |
 | Boundaries | Whether upload, queueing, storage, networking, and model loading are included. |
 
-The current service admits one upload or analysis per process and rejects concurrent submissions with HTTP 429. Account for rejections in load tests. `processing_time_ms` covers the detector's work after upload; measure client-observed latency separately.
+The current service runs one analysis per process; jobs wait in a bounded queue, while synchronous submissions receive HTTP 429 during other work. Account for rejections in load tests. `processing_time_ms` covers the detector's work after upload; measure client-observed latency separately.
 
 Compare candidates on the same dataset and hardware or document differences. Evaluate quality, speed, and cost together so that shorter audio coverage does not conceal missed detections.
 
 ## Published results
 
 A benchmark report should include the dataset manifest or access-controlled reference, provenance and split method, exact code and model revisions, thresholds, reproduction commands, metric definitions, confidence intervals, latency, cost, exclusions, and known limitations. Attribute upstream metrics separately from locally measured results.
+
+
+## Reproducible local evaluation
+
+Supply authorized, independently labeled audio and a UTF-8 CSV:
+
+```csv
+path,label
+songs/human-recording.flac,human
+songs/generated-song.wav,ai
+```
+
+Paths are relative to the manifest unless absolute. Run:
+
+```bash
+ai-song-detection evaluate labeled-songs.csv --start 0 --duration 300 --output evaluation.json
+```
+
+The report retains each input's provenance, failures and uncertain decisions, the model and application metadata, and the current policy. It reports confusion counts with AI as positive, decision coverage, accuracy among decided cases, correct decisions divided by all inputs, and precision/recall/F1/false-positive/false-negative rates with denominators. Missing denominators yield null rather than invented values. Failures produce a nonzero exit code and remain in the output. This command does not supply a representative corpus, prove label quality, calculate a general accuracy guarantee, or replace confidence intervals and grouped held-out evaluation. A mixed-production corpus needs a separately specified labeling protocol before using this binary manifest.

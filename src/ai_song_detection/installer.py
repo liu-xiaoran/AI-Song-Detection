@@ -489,6 +489,7 @@ def command_text(python: Path, tools: Path, state: Path, windows: bool) -> str:
             "chcp 65001 >nul\n"
             f'set "PATH={escape(tools)};%PATH%"\n'
             f'set "AI_SONG_DETECTION_STATE_DIR={escape(state)}"\n'
+            f'set "AI_SONG_DETECTION_INSTALL_DIR={escape(state.parent)}"\n'
             f'"{escape(python)}" -m ai_song_detection %*\n'
             'set "AI_COMMAND_RESULT=%errorlevel%"\n'
             "if defined AI_PREVIOUS_CODEPAGE chcp %AI_PREVIOUS_CODEPAGE% >nul\n"
@@ -498,6 +499,7 @@ def command_text(python: Path, tools: Path, state: Path, windows: bool) -> str:
         "#!/bin/sh\n"
         + f'export PATH={shlex.quote(str(tools))}:"$PATH"\n'
         + f"export AI_SONG_DETECTION_STATE_DIR={shlex.quote(str(state))}\n"
+        + f"export AI_SONG_DETECTION_INSTALL_DIR={shlex.quote(str(state.parent))}\n"
         + f'exec {shlex.quote(str(python))} -m ai_song_detection "$@"\n'
     )
 
@@ -614,6 +616,7 @@ def install_entries(root: Path, desktop: Path, python: Path, tools: Path, window
             "import os, sys, traceback\nfrom pathlib import Path\n"
             + f"os.environ['PATH'] = {str(tools)!r} + os.pathsep + os.environ.get('PATH', '')\n"
             + f"os.environ['AI_SONG_DETECTION_STATE_DIR'] = {str(root / 'state')!r}\n"
+            + f"os.environ['AI_SONG_DETECTION_INSTALL_DIR'] = {str(root)!r}\n"
             + "state = Path(os.environ['AI_SONG_DETECTION_STATE_DIR'])\n"
             + "state.mkdir(parents=True, exist_ok=True)\n"
             + "with (state / 'desktop.log').open('a', encoding='utf-8') as log:\n"
@@ -691,6 +694,10 @@ def install(source: Path, uv: Path, root: Path, desktop: Path, *, launch: bool =
     if manifest["uv_version"] not in run([str(uv), "--version"], capture=True, timeout=10).stdout:
         raise InstallError("The installer version does not match the pinned dependency manifest.")
     with install_lock(root):
+        if (root / "uninstall-request.json").exists():
+            raise InstallError(
+                "An uninstall is pending. Wait for its cleanup to finish before installing again."
+            )
         print("Installing AI Song Detection into " + str(root), flush=True)
         tools = prepare_ffmpeg(root, manifest, target)
         source_hash = payload_digest(source)
@@ -782,6 +789,12 @@ def install(source: Path, uv: Path, root: Path, desktop: Path, *, launch: bool =
                 backup[entry] = entry.read_bytes()
         try:
             wrapper = install_entries(root, desktop, python, tools, target.startswith("win32"))
+            suffix = ".lnk" if target.startswith("win32") else ".command"
+            information["desktop_entries"] = {
+                str(desktop / (label + suffix)): digest(desktop / (label + suffix))
+                for label in (APP_NAME, "Stop " + APP_NAME)
+            }
+            write_atomic(ready, json.dumps(information, indent=2) + "\n")
             write_atomic(current_path, json.dumps(information, indent=2) + "\n")
         except Exception:
             # Restore the previous wrapper; immutable old environments remain untouched.

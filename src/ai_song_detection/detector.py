@@ -14,7 +14,11 @@ import math
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+import uuid
+from collections.abc import Callable
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -24,6 +28,8 @@ import soundfile as sf
 from scipy.fft import rfft
 from scipy.ndimage import minimum_filter1d
 from scipy.signal import upfirdn
+
+from . import __version__
 
 SAMPLE_RATE = 16000
 N_FFT = 8192
@@ -37,6 +43,14 @@ MEDIA_DEMUXERS = "wav,mp3,flac,ogg,mov,aac,aiff,asf"
 MODEL_SHA256 = "af7a75c6ed457bc5b6941c8bc76aa06a66d48de40db944b761ed2bebfc0fbbd3"
 UPSTREAM_COMMIT = "6ba389e94a179ac90f3eb134b741ef37baa30434"
 ASSETS = Path(__file__).parent / "assets"
+DECISION_POLICY = {
+    "id": "fakeprint-screening-v1",
+    "version": 1,
+    "human_below": 0.4,
+    "ai_above": 0.6,
+    "uncertain_inclusive": [0.4, 0.6],
+    "validated": False,
+}
 
 
 class AudioError(ValueError):
@@ -118,7 +132,49 @@ def compute_fakeprint(audio: np.ndarray) -> np.ndarray:
     return (residue / (np.max(residue) + 1e-6)).astype(np.float32)
 
 
-def _ffmpeg_decode(path: Path) -> tuple[np.ndarray, int, float]:
+class AnalysisCancelled(Exception):
+    """Cooperative cancellation; raised only after owned decoder processes exit."""
+
+
+def check_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise AnalysisCancelled("Analysis cancelled.")
+
+
+def validate_window(start_seconds: float, duration_seconds: float) -> None:
+    if not math.isfinite(start_seconds) or start_seconds < 0:
+        raise AudioError("Start must be a finite non-negative number of seconds.", "invalid_window")
+    if not math.isfinite(duration_seconds) or not MIN_DURATION <= duration_seconds <= MAX_DURATION:
+        raise AudioError("Duration must be between 10 and 300 seconds.", "invalid_window")
+
+
+def _run_decoder(command, *, stdout, timeout, cancel_event):
+    check_cancelled(cancel_event)
+    process = subprocess.Popen(command, stdout=stdout, stderr=subprocess.DEVNULL)
+    started = time.monotonic()
+    try:
+        while True:
+            check_cancelled(cancel_event)
+            if time.monotonic() - started > timeout:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                output, _ = process.communicate(timeout=0.1)
+                return subprocess.CompletedProcess(command, process.returncode, output)
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+
+
+def _ffmpeg_decode(
+    path: Path, start_seconds=0.0, duration_seconds=MAX_DURATION, cancel_event=None
+) -> tuple[np.ndarray, int, float]:
     ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
     if not ffmpeg or not ffprobe:
         raise AudioError(
@@ -126,7 +182,7 @@ def _ffmpeg_decode(path: Path) -> tuple[np.ndarray, int, float]:
             "decoder_unavailable",
         )
     try:
-        probe = subprocess.run(
+        probe = _run_decoder(
             [
                 ffprobe,
                 "-v",
@@ -144,10 +200,11 @@ def _ffmpeg_decode(path: Path) -> tuple[np.ndarray, int, float]:
                 str(path),
             ],
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
             timeout=10,
-            check=True,
+            cancel_event=cancel_event,
         )
+        if probe.returncode:
+            raise AudioError("The file does not contain a readable audio stream.")
         metadata = json.loads(probe.stdout)
         stream = metadata["streams"][0]
         sample_rate, channels = int(stream["sample_rate"]), int(stream["channels"])
@@ -160,11 +217,12 @@ def _ffmpeg_decode(path: Path) -> tuple[np.ndarray, int, float]:
     except (subprocess.SubprocessError, KeyError, IndexError, ValueError, TypeError):
         raise AudioError("The file does not contain a readable audio stream.") from None
 
-    # Decode into an anonymous temporary file rather than an unbounded RAM pipe.
-    # The finite -t, native format limits, and output byte cap bound work and space.
+    # Bounded native-rate output in an anonymous file, with a cancellation-aware child.
+    seconds = duration_seconds + 1
+    byte_limit = int(seconds * sample_rate * channels * 4)
     with tempfile.TemporaryFile() as decoded:
         try:
-            result = subprocess.run(
+            result = _run_decoder(
                 [
                     ffmpeg,
                     "-nostdin",
@@ -178,13 +236,15 @@ def _ffmpeg_decode(path: Path) -> tuple[np.ndarray, int, float]:
                     "1",
                     "-i",
                     str(path),
+                    "-ss",
+                    str(start_seconds),
                     "-map",
                     "0:a:0",
                     "-vn",
                     "-sn",
                     "-dn",
                     "-t",
-                    str(MAX_DECODE_SECONDS),
+                    str(seconds),
                     "-f",
                     "f32le",
                     "-c:a",
@@ -194,13 +254,12 @@ def _ffmpeg_decode(path: Path) -> tuple[np.ndarray, int, float]:
                     "-ac",
                     str(channels),
                     "-fs",
-                    str(MAX_DECODE_BYTES),
+                    str(byte_limit),
                     "pipe:1",
                 ],
                 stdout=decoded,
-                stderr=subprocess.DEVNULL,
                 timeout=60,
-                check=False,
+                cancel_event=cancel_event,
             )
         except subprocess.TimeoutExpired:
             raise AudioError(
@@ -209,37 +268,49 @@ def _ffmpeg_decode(path: Path) -> tuple[np.ndarray, int, float]:
         if result.returncode:
             raise AudioError("The audio file could not be decoded.")
         byte_count = decoded.tell()
-        if not byte_count or byte_count > MAX_DECODE_BYTES:
-            raise AudioError("The audio stream is empty or exceeds decoder limits.")
+        if not byte_count:
+            raise AudioError("The selected segment contains no audio.", "audio_too_short")
+        if byte_count > byte_limit:
+            raise AudioError("The audio stream exceeds decoder limits.")
         decoded.seek(0)
         sample_count = byte_count // (4 * channels) * channels
         audio = np.fromfile(decoded, dtype="<f4", count=sample_count).reshape(-1, channels)
-    decoded_duration = len(audio) / sample_rate
-    if decoded_duration < MAX_DURATION:
-        duration = decoded_duration
-    else:
-        duration = max(duration, decoded_duration)
-    return audio, sample_rate, duration
+    return audio, sample_rate, max(duration, start_seconds + len(audio) / sample_rate)
 
 
-def load_audio(path: Path) -> tuple[np.ndarray, int, float]:
-    """Decode at native rate; cap reads before allocation or resampling."""
+def load_audio(
+    path: Path, start_seconds=0.0, duration_seconds=MAX_DURATION, cancel_event=None
+) -> tuple[np.ndarray, int, float]:
+    """Decode only a bounded selected window at native sample rate."""
+    validate_window(start_seconds, duration_seconds)
+    check_cancelled(cancel_event)
     if not path.is_file():
         raise AudioError("Audio file not found.", "file_not_found")
     try:
         with sf.SoundFile(path) as source:
             _validate_format(source.samplerate, source.channels)
             duration = source.frames / source.samplerate
-            audio = source.read(
-                frames=int(MAX_DECODE_SECONDS * source.samplerate),
-                dtype="float32",
-                always_2d=True,
-            )
+            if start_seconds >= duration:
+                raise AudioError("The selected segment starts beyond the audio.", "audio_too_short")
+            start_frame = int(start_seconds * source.samplerate)
+            source.seek(start_frame)
+            remaining = int((duration_seconds + 1) * source.samplerate)
+            chunks = []
+            while remaining > 0:
+                check_cancelled(cancel_event)
+                chunk = source.read(
+                    frames=min(remaining, source.samplerate), dtype="float32", always_2d=True
+                )
+                if not len(chunk):
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            audio = np.concatenate(chunks) if chunks else np.empty((0, source.channels), np.float32)
             return audio, source.samplerate, duration
     except AudioError:
         raise
     except (sf.LibsndfileError, RuntimeError):
-        return _ffmpeg_decode(path)
+        return _ffmpeg_decode(path, start_seconds, duration_seconds, cancel_event)
 
 
 class Detector:
@@ -275,22 +346,56 @@ class Detector:
             "upstream_commit": UPSTREAM_COMMIT,
         }
 
-    def analyze(self, path: str | Path, filename: str | None = None) -> dict:
+    def analyze(
+        self,
+        path: str | Path,
+        filename: str | None = None,
+        *,
+        start_seconds: float = 0,
+        duration_seconds: float = MAX_DURATION,
+        cancel_event: threading.Event | None = None,
+        progress: Callable[[str], None] | None = None,
+    ) -> dict:
         started = time.perf_counter()
         path = Path(path).resolve()
-        audio, sample_rate, duration = load_audio(path)
+        validate_window(start_seconds, duration_seconds)
+
+        def stage(name):
+            check_cancelled(cancel_event)
+            if progress:
+                progress(name)
+
+        if not path.is_file():
+            raise AudioError("Audio file not found or not a regular file.", "file_not_found")
+        stage("hashing")
+        digest = hashlib.sha256()
+        try:
+            before = path.stat()
+            with path.open("rb") as source:
+                while chunk := source.read(1024 * 1024):
+                    check_cancelled(cancel_event)
+                    digest.update(chunk)
+        except OSError:
+            raise AudioError("Audio file could not be read.", "file_not_found") from None
+        stage("decoding")
+        audio, sample_rate, duration = load_audio(
+            path, start_seconds, duration_seconds, cancel_event
+        )
+        stage("preprocessing")
         if len(audio) / sample_rate < MIN_DURATION:
             raise AudioError("At least 10 seconds of audio is required.", "audio_too_short")
         if not np.isfinite(audio).all():
             raise AudioError("Audio contains non-finite samples.")
-        converted = resample(audio, sample_rate)[: int(MAX_DURATION * SAMPLE_RATE)]
+        converted = resample(audio, sample_rate)[: int(duration_seconds * SAMPLE_RATE)]
         mono = converted.mean(axis=1, dtype=np.float32)
         if float(np.sqrt(np.mean(mono.astype(np.float64) ** 2))) < 1e-5:
             raise AudioError("The audio is silent or too quiet to analyze.", "insufficient_audio")
         features = compute_fakeprint(mono)
         if not np.isfinite(features).all() or np.max(features) < 0.01:
             raise AudioError("The audio has insufficient spectral evidence.", "insufficient_audio")
+        stage("inference")
         score = float(self.session.run(None, {self.input_name: features[None, :]})[0][0, 0])
+        check_cancelled(cancel_event)
         if not math.isfinite(score) or not 0 <= score <= 1:
             raise RuntimeError("The model returned an invalid score.")
         warnings = [
@@ -305,14 +410,41 @@ class Detector:
         else:
             assessment = "likely_ai_generated" if score > 0.6 else "likely_human_created"
         analyzed_duration = len(mono) / SAMPLE_RATE
-        truncated = duration > MAX_DURATION + 1 / SAMPLE_RATE
+        analyzed_end = start_seconds + analyzed_duration
+        truncated = start_seconds > 0 or duration > analyzed_end + 1 / SAMPLE_RATE
         if truncated:
-            warnings.append("Only the first 300 seconds of this file were analyzed.")
+            if start_seconds == 0 and duration_seconds == MAX_DURATION:
+                warnings.append("Only the first 300 seconds of this file were analyzed.")
+            else:
+                warnings.append(
+                    f"Only the selected segment {start_seconds:g}-{analyzed_end:g} seconds was analyzed; "
+                    "this is not a whole-song or time-localized authorship verdict."
+                )
+        after = path.stat()
+        if (before.st_size, before.st_mtime_ns, before.st_ino) != (
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ino,
+        ):
+            raise AudioError(
+                "The input changed during analysis. Retry with a stable file.", "input_changed"
+            )
+        stage("complete")
         return {
             "filename": Path(filename or path.name).name,
             "assessment": assessment,
             "ai_score": score,
             "threshold": 0.5,
+            "upstream_binary_threshold": 0.5,
+            "decision_policy": dict(DECISION_POLICY),
+            "report_id": str(uuid.uuid4()),
+            "input_sha256": digest.hexdigest(),
+            "input_size_bytes": before.st_size,
+            "application_version": __version__,
+            "analyzed_at": datetime.now(timezone.utc).isoformat(),
+            "analyzed_start_seconds": round(start_seconds, 4),
+            "analyzed_end_seconds": round(analyzed_end, 4),
+            "requested_duration_seconds": duration_seconds,
             "audio_duration_seconds": round(duration, 4),
             "analyzed_duration_seconds": round(analyzed_duration, 4),
             "truncated": truncated,

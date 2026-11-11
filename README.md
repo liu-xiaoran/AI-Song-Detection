@@ -15,7 +15,7 @@ Download and extract this project, then run the installer for your computer:
 
 The installer prepares private Python, FFmpeg/ffprobe, and application dependencies, creates desktop start and stop entries, and opens the application. On Windows it also prepares a private Microsoft Visual C++ runtime for ONNX Runtime. Use `--no-launch` to install without opening a browser. It does not require an existing Python installation, Git, Homebrew, or administrator access, and does not change your global PATH. The first installation requires an internet connection. uv, FFmpeg, and Windows C++ runtime downloads are pinned and checksum-verified; see [installer dependencies](install/README.md).
 
-After installation, double-click the desktop **AI Song Detection** entry. The launcher starts the local service, waits for the model and decoder to be ready, and opens your default browser. Select or drop an audio file and choose **Analyze track**. Later launches and detection work offline. The installed copy is independent of the extracted source folder.
+After installation, double-click the desktop **AI Song Detection** entry. The launcher starts the local service, waits for the model and decoder to be ready, and opens your default browser. Select or drop multiple audio files and choose **Start queue**. Files run serially; each item shows upload progress, processing stage, and cancellation status. Choose a start offset and 10–300-second window before adding files. Session results can be revisited, copied, or downloaded as JSON/CSV. Later launches and detection work offline. The installed copy is independent of the extracted source folder.
 
 Repeated clicks reopen the existing instance. If the preferred port is occupied by another application, the launcher chooses an available port. Closing the browser does not stop the detector; use the desktop **Stop AI Song Detection** entry or the `stop` command when finished.
 
@@ -37,7 +37,7 @@ The installer prints its command-wrapper path. For example, launch the installed
 & "$env:LOCALAPPDATA\AI Song Detection\bin\ai-song-detection.cmd" launch
 ```
 
-The same wrapper accepts `status`, `stop`, and `detect`. From a development checkout, use:
+The same wrapper accepts detection, diagnostics, maintenance, and offline-bundle commands. From a development checkout, use:
 
 ```bash
 uv run ai-song-detection launch
@@ -45,9 +45,17 @@ uv run ai-song-detection status
 uv run ai-song-detection stop
 uv run ai-song-detection detect song.mp3
 uv run ai-song-detection detect song.mp3 another-song.flac --json
+uv run ai-song-detection detect ./songs --recursive --start 30 --duration 60 --output reports.csv
+uv run ai-song-detection doctor --json
+uv run ai-song-detection logs --lines 100
+uv run ai-song-detection status --url
+uv run ai-song-detection launch --port 8001 --strict-port
+uv run ai-song-detection evaluate labeled-songs.csv --output evaluation.json
 ```
 
 `launch` manages a background instance and opens the default browser. `serve` remains available for foreground operation, stopped with Ctrl+C. The launcher's `--no-browser` option is useful for automated checks. Detection JSON mode writes one JSON object per input file and exits with status 1 if any file fails.
+
+For an installed desktop copy, `update` prepares and checks a new release before switching. `cleanup --keep 2` and `uninstall` preview their changes; add `--apply` to execute. Stop the service before cleaning old releases. Use `shell-setup --directory "$HOME/.local/bin"` to create a short command in a directory you choose; add that directory to your own shell PATH if needed. See [maintenance and offline installation](docs/operations.md#maintenance-and-offline-installation).
 
 ### HTTP API
 
@@ -74,7 +82,7 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The image includes Python, 
 
 The score is an uncalibrated model output, not a verified probability that a song is AI-generated. The uncertainty band is an initial product policy and has not been validated against an independent evaluation set.
 
-The web interface and API accept one file up to **100 MiB**, with at least **10 seconds** of audio. Supported extensions are MP3, WAV, FLAC, M4A, AAC, OGG, Opus, AIFF/AIF, and WMA, subject to decoder support. Audio must be mono or stereo at 16–96 kHz. Analysis uses the **first 300 seconds**; responses disclose analyzed duration and truncation. One upload or analysis runs at a time per server process.
+The web interface accepts a multi-file queue; each API upload accepts one file up to **100 MiB**, with at least **10 seconds** of audio. Supported extensions are MP3, WAV, FLAC, M4A, AAC, OGG, Opus, AIFF/AIF, and WMA, subject to decoder support. Audio must be mono or stereo at 16–96 kHz. Analysis defaults to the **first 300 seconds**, with an optional start offset and 10–300-second duration. Reports disclose the actual analyzed interval and whether audio was omitted. Only one analysis runs at a time. The jobs API admits up to nine pending jobs (one running plus eight waiting/uploading); the synchronous endpoint returns 429 while busy.
 
 The model targets artifacts from **Suno ≤ 5 and Udio ≤ 1.5**. Other generators, future generator versions, mixed production, and heavily modified audio are not validated. Detection cannot establish authorship, copyright ownership, or exact production history.
 

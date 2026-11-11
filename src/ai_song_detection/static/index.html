@@ -29,33 +29,43 @@
 
       <div class="workspace">
         <section class="upload-panel panel" aria-labelledby="upload-title">
-          <div class="panel-heading"><span class="step-number">01</span><h2 id="upload-title">Choose your track</h2></div>
+          <div class="panel-heading"><span class="step-number">01</span><h2 id="upload-title">Choose your tracks</h2></div>
           <div class="connection-notice" id="connection-notice" role="status" hidden>
-            <p>The detector is not connected. Reopen <strong>AI Song Detection</strong> from your desktop, then retry. Your selected track stays here.</p>
+            <p>The detector is not connected. Reopen <strong>AI Song Detection</strong> from your desktop, then retry. Your queue stays here.</p>
             <button class="retry-connection" id="retry-connection" type="button">Retry connection</button>
           </div>
           <form id="upload-form">
             <div class="drop-zone" id="drop-zone">
-              <input class="file-input" id="audio-file" name="file" type="file" accept=".mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aiff,.aif,.wma" aria-describedby="file-help">
+              <input class="file-input" id="audio-file" name="file" type="file" multiple accept=".mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aiff,.aif,.wma" aria-describedby="file-help window-help">
               <label class="drop-label" for="audio-file">
                 <span class="upload-icon" aria-hidden="true">
                   <svg viewBox="0 0 32 32" fill="none"><path d="M16 21V6m0 0-6 6m6-6 6 6M6 21v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </span>
-                <span class="drop-title">Drop a song here</span>
+                <span class="drop-title">Drop songs here</span>
                 <span class="drop-subtitle">or <span class="browse-link">browse files</span></span>
               </label>
             </div>
-            <p class="file-help" id="file-help">MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, AIFF, WMA<br>Up to 100 MB · At least 10 seconds</p>
+            <p class="file-help" id="file-help">MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, AIFF, WMA<br>Up to 100 MB per file · At least 10 seconds</p>
+            <div class="window-options">
+              <label for="start-seconds">Start at (seconds)<input id="start-seconds" type="number" min="0" step="0.1" value="0" required></label>
+              <label for="duration-seconds">Analyze for (seconds)<input id="duration-seconds" type="number" min="10" max="300" step="0.1" value="300" required></label>
+            </div>
+            <p class="window-help" id="window-help">These settings apply when you add files. Each track is processed in order. You can add more while analysis runs.</p>
             <div class="selected-file" id="selected-file" hidden>
               <span class="file-symbol" aria-hidden="true">♪</span>
               <div class="file-details"><span id="file-name"></span><span id="file-size"></span></div>
-              <button class="remove-file" id="remove-file" type="button" aria-label="Remove selected file">×</button>
+              <button class="remove-file" id="remove-file" type="button" aria-label="Clear queued files">×</button>
             </div>
-            <button class="analyze-button" id="analyze-button" type="submit" disabled><span id="button-label">Analyze track</span><span aria-hidden="true" id="button-arrow">↗</span><span class="spinner" id="button-spinner" hidden aria-hidden="true"></span></button>
+            <button class="analyze-button" id="analyze-button" type="submit" disabled><span id="button-label">Start queue</span><span aria-hidden="true" id="button-arrow">↗</span><span class="spinner" id="button-spinner" hidden aria-hidden="true"></span></button>
             <p class="process-status" id="process-status" role="status" aria-live="polite"></p>
             <div class="error-message" id="error-message" role="alert" hidden></div>
           </form>
-          <p class="privacy-note"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5" stroke="currentColor"/><path d="M5.5 7V4.5a2.5 2.5 0 0 1 5 0V7" stroke="currentColor" stroke-linecap="round"/></svg>Audio stays on this server and is deleted after analysis.</p>
+          <section class="queue-section" id="queue-section" aria-labelledby="queue-title" hidden>
+            <div class="section-toolbar"><h3 id="queue-title">Current queue</h3><button class="text-button" id="clear-queued" type="button">Clear queued</button></div>
+            <ol class="track-list" id="queue-list" aria-label="Tracks in queue"></ol>
+          </section>
+          <p class="privacy-note"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5" stroke="currentColor"/><path d="M5.5 7V4.5a2.5 2.5 0 0 1 5 0V7" stroke="currentColor" stroke-linecap="round"/></svg>Audio is processed locally. Temporary server files are deleted after each job.</p>
+          <p class="lifecycle-note">Closing this tab keeps the detector running. Use the Stop desktop entry.</p>
         </section>
 
         <section class="result-panel panel" aria-labelledby="result-title" aria-busy="false" id="result-panel">
@@ -74,14 +84,23 @@
             <div class="score-scale"><span>Human-like signal</span><span>AI-like signal</span></div>
             <p class="score-explanation">An uncalibrated model score, not the probability that a song was made with AI.</p>
             <dl class="result-metrics"><div><dt>Audio analyzed</dt><dd id="analyzed-duration"></dd></div><div><dt>Processing time</dt><dd id="processing-time"></dd></div></dl>
+            <p class="coverage-note" id="analyzed-coverage"></p>
+            <details class="report-details"><summary>Report details</summary><dl><div><dt>Report ID</dt><dd id="report-id"></dd></div><div><dt>Input SHA-256</dt><dd id="input-sha256"></dd></div><div><dt>Model</dt><dd id="report-model"></dd></div><div><dt>Decision policy</dt><dd id="report-policy"></dd></div><div><dt>Analyzed at</dt><dd id="report-time"></dd></div></dl></details>
             <ul class="result-warnings" id="result-warnings" hidden></ul>
             <p class="result-caution">Use this result as a screening signal. It is not proof of how a song was made.</p>
           </div>
+          <div class="export-actions" id="report-actions" hidden><button class="small-button" id="download-json" type="button">Download JSON</button><button class="small-button" id="copy-json" type="button">Copy JSON</button><button class="small-button" id="download-csv" type="button">Download CSV</button><button class="small-button" id="copy-csv" type="button">Copy CSV</button></div>
+          <p class="export-status" id="export-status" role="status" aria-live="polite"></p>
         </section>
       </div>
 
+      <section class="history-panel panel" id="history-section" aria-labelledby="history-title" hidden>
+        <div class="section-toolbar"><div><h2 id="history-title">Session history</h2><p>Reports stay in this tab's memory. Download them before closing or reloading.</p></div><div class="history-actions"><button class="small-button" id="download-all-json" type="button">All JSON</button><button class="small-button" id="download-all-csv" type="button">All CSV</button><button class="text-button" id="clear-history" type="button">Clear history</button></div></div>
+        <ol class="track-list history-list" id="history-list" aria-label="Session reports"></ol>
+      </section>
+
       <section class="context-grid" aria-label="About the analysis">
-        <article><span class="context-index">A / THE METHOD</span><h2>Patterns, not guesswork.</h2><p>The detector looks for frequency artifacts that audio generators can leave behind. It analyzes the first 300 seconds of a track.</p></article>
+        <article><span class="context-index">A / THE METHOD</span><h2>Patterns, not guesswork.</h2><p>The detector looks for frequency artifacts that audio generators can leave behind. Choose a window of 10–300 seconds. Results apply only to the audio analyzed.</p></article>
         <article><span class="context-index">B / THE COVERAGE</span><h2>Know its range.</h2><p>The upstream model targets Suno ≤ 5 and Udio ≤ 1.5. New generators, mixed production, and modified audio can affect results.</p></article>
         <article><span class="context-index">C / THE EVIDENCE</span><h2>Keep the numbers in context.</h2><p>The upstream project reports 99.88% accuracy on its own held-out test set. We have not independently verified that result.</p></article>
       </section>

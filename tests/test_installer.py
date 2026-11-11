@@ -212,11 +212,25 @@ def test_windows_wrappers_enable_utf8_before_unicode_paths():
         True,
     )
     assert text.index("chcp 65001 >nul") < text.index("中文")
+    assert 'set "AI_SONG_DETECTION_INSTALL_DIR=C:/Users/中文 User"' in text
     assert "if defined AI_PREVIOUS_CODEPAGE chcp %AI_PREVIOUS_CODEPAGE% >nul" in text
     assert f'"{python}" -m ai_song_detection %*' in text
     shortcut = installer.shortcut_text(wrapper, "launch", True)
     assert shortcut.splitlines()[1] == "chcp 65001 >nul"
     assert f'call "{wrapper}" launch' in shortcut
+
+
+def test_posix_wrapper_binds_maintenance_to_its_installation(tmp_path):
+    text = installer.command_text(
+        tmp_path / "releases/current/.venv/bin/python",
+        tmp_path / "tools/bin",
+        tmp_path / "state",
+        False,
+    )
+    import shlex
+
+    assert f"export AI_SONG_DETECTION_INSTALL_DIR={shlex.quote(str(tmp_path))}\n" in text
+    assert f"export AI_SONG_DETECTION_STATE_DIR={shlex.quote(str(tmp_path / 'state'))}\n" in text
 
 
 def test_windows_batch_files_preserve_crlf_for_unicode_commands(tmp_path):

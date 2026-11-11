@@ -9,7 +9,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +19,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import APP_ID, __version__
 from .detector import AudioError, Detector
-from .schemas import DetectionResult
+from .jobs import JobStore
+from .schemas import DetectionJob, DetectionResult
 
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
@@ -82,9 +83,14 @@ class BodyLimitMiddleware:
 async def lifespan(app: FastAPI):
     app.state.detector = Detector()
     app.state.active_request = False
-    app.state.instance_id = os.environ.get("AI_SONG_DETECTION_INSTANCE_ID", "")
+    app.state.instance_id = os.environ.get("AI_SONG_DETECTION_INSTANCE_ID") or secrets.token_hex(24)
     app.state.control_token = os.environ.get("AI_SONG_DETECTION_CONTROL_TOKEN", "")
-    yield
+    app.state.analysis_lock = asyncio.Lock()
+    app.state.jobs = JobStore(app.state.detector, app.state.analysis_lock)
+    try:
+        yield
+    finally:
+        await app.state.jobs.close()
 
 
 app = FastAPI(
@@ -183,48 +189,35 @@ def fail(status: int, code: str, message: str) -> HTTPException:
     return HTTPException(status, detail={"code": code, "message": message})
 
 
-@app.post(
-    "/api/v1/detect",
-    response_model=DetectionResult,
-    responses={
-        400: {"description": "Malformed multipart upload"},
-        408: {"description": "Upload timeout"},
-        413: {"description": "Upload exceeds 100 MB"},
-        415: {"description": "Unsupported file extension"},
-        422: {"description": "Missing, invalid, short, or unsupported audio"},
-        429: {"description": "Another analysis is in progress"},
-        500: {"description": "Analysis failed"},
-    },
-    openapi_extra={
-        "requestBody": {
-            "required": True,
-            "content": {
-                "multipart/form-data": {
-                    "schema": {
-                        "type": "object",
-                        "required": ["file"],
-                        "properties": {"file": {"type": "string", "format": "binary"}},
-                    }
+UPLOAD_SCHEMA = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "required": ["file"],
+                    "properties": {"file": {"type": "string", "format": "binary"}},
                 }
-            },
-        }
-    },
-)
-async def detect(request: Request):
-    """Analyze one uploaded audio file; remove temporary files after processing."""
-    if request.app.state.active_request:
-        raise fail(429, "busy", "Another song is being analyzed. Please try again shortly.")
-    # No await between checking and acquiring: one request per process, including upload.
-    request.app.state.active_request = True
+            }
+        },
+    }
+}
+
+
+async def save_upload(request):
+    directory = None
+    form = None
     try:
-        try:
-            async with asyncio.timeout(UPLOAD_TIMEOUT_SECONDS):
+        async with asyncio.timeout(UPLOAD_TIMEOUT_SECONDS):
+            try:
                 form = await request.form(max_files=1, max_fields=0, max_part_size=MAX_UPLOAD_BYTES)
-        except StarletteHTTPException as exc:
-            if isinstance(exc.detail, dict):
-                raise
-            raise fail(400, "invalid_upload", "Submit one audio file in the 'file' field.") from exc
-        try:
+            except StarletteHTTPException as exc:
+                if isinstance(exc.detail, dict):
+                    raise
+                raise fail(
+                    400, "invalid_upload", "Submit one audio file in the 'file' field."
+                ) from exc
             upload = form.get("file")
             if len(form.multi_items()) != 1 or not isinstance(upload, UploadFile):
                 raise fail(422, "missing_file", "Submit one audio file in the 'file' field.")
@@ -234,36 +227,118 @@ async def detect(request: Request):
                 raise fail(415, "unsupported_format", "Choose a supported audio file format.")
             if upload.size is not None and upload.size > MAX_UPLOAD_BYTES:
                 raise fail(413, "file_too_large", "Choose an audio file of 100 MB or less.")
-            with tempfile.TemporaryDirectory(prefix="ai-song-") as directory:
-                path = Path(directory) / ("upload" + suffix)
-                size = 0
-                async with asyncio.timeout(UPLOAD_TIMEOUT_SECONDS):
-                    with path.open("wb") as target:
-                        while chunk := await upload.read(1024 * 1024):
-                            size += len(chunk)
-                            if size > MAX_UPLOAD_BYTES:
-                                raise fail(
-                                    413, "file_too_large", "Choose an audio file of 100 MB or less."
-                                )
-                            target.write(chunk)
-                if size == 0:
-                    raise fail(422, "empty_file", "The uploaded file is empty.")
-                await upload.close()
-                # Inference is outside the upload timeout; do not delete an active thread's input.
-                try:
-                    return await run_in_threadpool(
-                        request.app.state.detector.analyze, path, filename=filename
-                    )
-                except AudioError as exc:
-                    raise fail(422, exc.code, str(exc)) from exc
-                except Exception:
-                    logger.exception("Audio analysis failed")
-                    raise fail(
-                        500, "analysis_failed", "Audio analysis failed. Please try another file."
-                    )
-        finally:
-            await form.close()
+            directory = tempfile.TemporaryDirectory(prefix="ai-song-")
+            path = Path(directory.name) / ("upload" + suffix)
+            size = 0
+            with path.open("wb") as target:
+                while chunk := await upload.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:
+                        raise fail(413, "file_too_large", "Choose an audio file of 100 MB or less.")
+                    target.write(chunk)
+            if not size:
+                raise fail(422, "empty_file", "The uploaded file is empty.")
+        return directory, path, filename
     except TimeoutError as exc:
+        if directory:
+            directory.cleanup()
         raise fail(408, "upload_timeout", "The request took too long. Please try again.") from exc
+    except BaseException:
+        if directory:
+            directory.cleanup()
+        raise
     finally:
+        if form:
+            await form.close()
+
+
+@app.post(
+    "/api/v1/detect",
+    response_model=DetectionResult,
+    openapi_extra=UPLOAD_SCHEMA,
+    responses={
+        429: {"description": "Another analysis or upload is in progress; use jobs for queueing"}
+    },
+)
+async def detect(
+    request: Request,
+    start_seconds: float = Query(0, ge=0, allow_inf_nan=False),
+    duration_seconds: float = Query(300, ge=10, le=300, allow_inf_nan=False),
+):
+    """Legacy synchronous analysis. Use /jobs for queueing, stages and cancellation."""
+    if request.app.state.active_request or request.app.state.jobs.pending:
+        raise fail(
+            429, "busy", "Another song is being analyzed. Use the jobs endpoint to queue work."
+        )
+    request.app.state.active_request = True
+    directory = None
+    try:
+        directory, path, filename = await save_upload(request)
+        async with request.app.state.analysis_lock:
+            try:
+                return await run_in_threadpool(
+                    request.app.state.detector.analyze,
+                    path,
+                    filename=filename,
+                    start_seconds=start_seconds,
+                    duration_seconds=duration_seconds,
+                )
+            except AudioError as exc:
+                raise fail(422, exc.code, str(exc)) from exc
+            except Exception:
+                logger.exception("Audio analysis failed")
+                raise fail(
+                    500, "analysis_failed", "Audio analysis failed. Please try another file."
+                )
+    finally:
+        if directory:
+            directory.cleanup()
         request.app.state.active_request = False
+
+
+@app.post(
+    "/api/v1/jobs",
+    response_model=DetectionJob,
+    status_code=202,
+    openapi_extra=UPLOAD_SCHEMA,
+    responses={429: {"description": "Queue full (one running and eight waiting/uploading)"}},
+)
+async def create_job(
+    request: Request,
+    start_seconds: float = Query(0, ge=0, allow_inf_nan=False),
+    duration_seconds: float = Query(300, ge=10, le=300, allow_inf_nan=False),
+):
+    """Upload one file and enqueue it. Reports expire after one hour or 100 completed jobs."""
+    jobs = request.app.state.jobs
+    if not jobs.reserve():
+        raise fail(429, "queue_full", "The queue is full. Wait for a job to finish and retry.")
+    directory = None
+    try:
+        directory, path, filename = await save_upload(request)
+        return JSONResponse(
+            jobs.submit(directory, path, filename, start_seconds, duration_seconds),
+            status_code=202,
+            headers={"Cache-Control": "no-store"},
+        )
+    except BaseException:
+        if directory:
+            directory.cleanup()
+        jobs.pending -= 1
+        raise
+
+
+@app.get("/api/v1/jobs/{identifier}", response_model=DetectionJob)
+async def get_job(identifier: str, request: Request):
+    record = request.app.state.jobs.get(identifier)
+    if record is None:
+        raise fail(404, "job_not_found", "The job is unknown or its report has expired.")
+    return JSONResponse(record, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/v1/jobs/{identifier}/cancel", response_model=DetectionJob)
+async def cancel_job(identifier: str, request: Request):
+    """Idempotent cooperative cancellation; cancelling is not yet a terminal state."""
+    record = request.app.state.jobs.cancel(identifier)
+    if record is None:
+        raise fail(404, "job_not_found", "The job is unknown or its report has expired.")
+    return JSONResponse(record, headers={"Cache-Control": "no-store"})
