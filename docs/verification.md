@@ -2,9 +2,39 @@
 
 Date: 2026-11-11. Local platform: macOS ARM64, Python 3.12, CPU inference.
 
-The current functional suite covers bounded FIFO jobs and actual cancellation lifetime, upload validation and cleanup, window selection, content/report provenance, batch CLI exports, labeled-manifest evaluation math, strict-port behavior, maintenance ownership boundaries, and offline-bundle integrity/relocation contracts. Browser behavior tests cover serial queues, upload progress, cancellation, accepted-job polling recovery, failure retry, history, and JSON/CSV exports. These use synthetic audio and simulated failure cases; they do not measure real-song detection accuracy.
+## Source and browser checks
 
-A real local browser run verified two valid synthetic-audio jobs and one corrupt-audio failure, retained history, a selected 1–11-second interval, JSON/CSV downloads, 1440px/390px layouts without horizontal overflow, no JavaScript errors, and no external browser resource requests. Full native installation and relocated offline-restore evidence is recorded below after completion.
+- `uv run pytest -q`: **169 passed, 2 skipped**. The skipped tests require native Windows PowerShell/.NET; they are exercised on Windows CI. One upstream Starlette deprecation warning remains.
+- `node --test tests/browser/connection.test.cjs`: **11 passed**.
+- Ruff lint and formatting checks pass. Version 0.3.0 source distribution and wheel build successfully.
+
+The functional suite covers bounded FIFO jobs and actual cancellation lifetime, upload validation and cleanup, window selection, content/report provenance, batch CLI exports, labeled-manifest evaluation math, strict-port behavior, maintenance ownership boundaries, cross-platform raw update-archive validation, Windows worker startup/error reporting, and offline-bundle integrity/relocation contracts. Browser logic tests cover serial queues, upload progress, cancellation, accepted-job polling recovery, failure retry, history, and JSON/CSV exports.
+
+A real local browser run verified two valid synthetic-audio jobs and one corrupt-audio failure, retained history, a selected 1–11-second interval, JSON/CSV downloads, 1440px/390px layouts without horizontal overflow, no JavaScript errors, and no external browser resource requests. These checks use synthetic audio and simulated failures; they do not measure accuracy on real music.
+
+## Installed Mac and offline package
+
+The user's Mac installation has been updated to version 0.3.0 using the source payload from code commit `18d166263db77148da38238b597cf811410a550e`. Its installed payload SHA-256 is `e7ad6a5deb93b5fe3146644a3073647d2e1b958e3187e14765e33e1cbf160e70`, matching `installer.payload_digest` for that checkout. The desktop start/stop entries bind to this per-user installation. Final health and doctor checks confirmed the model and private FFmpeg/ffprobe were ready, with the managed service at `http://127.0.0.1:8002` at verification time.
+
+Local native installation, source-folder removal, desktop lifecycle, occupied-port fallback, offline relaunch, relocated offline restore, restored inference, and scoped uninstall checks passed during 0.3.0 verification. A read-only check of the user's default-browser tab visibly confirmed the new queue and window controls with `Detector ready`. The previous interactive Finder double-click/default-browser check is recorded under the historical 0.2.0 evidence below; it was not repeated for every maintenance-only revision.
+
+The final macOS ARM64 offline folder was regenerated from the installed payload and verified against its complete manifest. The ZIP archive was checked for CRC errors, the embedded source digest, and executable restore-entry permissions:
+
+- File: `AI-Song-Detection-0.3.0-macos-arm64-offline.zip`
+- Size: 282,380,089 bytes
+- SHA-256: `bc3331f89132d487c2af7314807d441d45c44c1c7067f71c3eadd1fb9145554e`
+
+It contains private Python/uv, decoder assets, dependencies, and the model/source for macOS ARM64; it is platform-specific. Checksums detect corruption and do not establish a publisher signature. The archive and ignored machine evidence are local deliverables, not committed Git files. Evidence is retained under `.runtime/verification/dev-v030/`, `.runtime/verification/native-v030/`, and `.runtime/verification/user-v030/`.
+
+## Native CI and Windows removal
+
+All six jobs in the [0.3.0 CI run 43046650583](https://github.com/liu-xiaoran/AI-Song-Detection/actions/runs/43046650583) passed for code commit `18d166263db77148da38238b597cf811410a550e`. Linux Python 3.11/3.12/3.13 jobs run lint, format, Python/Node tests, and package builds. Native jobs cover macOS ARM64, macOS Intel, and Windows x64 with private installation, source removal, desktop start/reuse/stop, occupied-port fallback, real model HTTP/CLI inference, browser upload/layout, diagnostics/previews, offline relaunch, relocated offline-bundle restore, and scoped uninstall.
+
+Windows Server 2025 completed **165 Python tests, with 6 platform-specific skips**, the 11 browser logic tests, and all 18 native smoke checks. The installed ONNX/C++ runtime modules were confirmed to load from private installation paths. Both named Windows remover tests passed, covering 1,025 files with read-only content and an external directory junction, and a mismatched ownership nonce that must preserve files and report failure.
+
+The restored disposable Windows installation's deferred uninstall completed in 2.446 seconds. The helper reported 15,026 files and 1,565 directories removed, no remaining owned paths, no error, and no retry errors. Only `unrelated.txt` remained at the installation root. The evidence and final result are retained under `.runtime/verification/windows-v030/` and in the run's `desktop-windows-2025` artifact. This confirms actual cleanup after CLI exit, not only a successful scheduling response.
+
+Windows validation used a hosted Server 2025 runner; physical Windows 10/11 desktops were not separately tested. Visible default-browser opening was directly observed on the user's Mac, while CI independently checks the requested browser opening and renders the interface with Chromium. Functional checks do not independently establish 99% detection accuracy or validate the product uncertainty thresholds.
 
 The previous release verification is retained as historical evidence and does not by itself verify version 0.3.0.
 
