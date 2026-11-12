@@ -1,5 +1,9 @@
 # AI Song Detection
 
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [Español](README.es.md)
+
+English is the primary project language, and this README is the source document for translations.
+
 Run AI music screening locally through a web interface, HTTP API, or command line. The application uses the MIT-licensed [lofcz/ai-music-detector](https://github.com/lofcz/ai-music-detector) fakeprint model and runs on a CPU, without a GPU, paid inference API, or training dependencies.
 
 The small ONNX model is included. Audio is processed on the machine running the application and is not sent to an external detection service.
@@ -106,7 +110,7 @@ node --test tests/browser/connection.test.cjs
 
 On macOS/Linux, `./start.sh` launches an already-created development environment without syncing or downloading dependencies. Use `uv run ai-song-detection serve --port 8001` for a foreground service at a chosen port.
 
-Project content is in English. Keep credentials and private audio out of Git. The bundled, attributed model is the intentional exception to the general rule against committing model artifacts.
+English is the primary project language; translated READMEs are provided for reference. Keep credentials and private audio out of Git. The bundled, attributed model is the intentional exception to the general rule against committing model artifacts.
 
 ## Documentation and license
 
